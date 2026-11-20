@@ -525,7 +525,9 @@ export function createPipeline(opts = {}) {
       n: used.length,
       peak: +peak.toFixed(1),
       cut: used.some((f) => f.via === 'cut'),
-      why: sheet.why ?? null,
+      // 兜底图的标记在**帧**上（`f.via === 'floor'`），不在 sheet.why 上。
+      // 交付层要靠它把"我还在看"和"发生了事"分开。
+      floor: used.some((f) => f.via === 'floor'),
       box,
     });
     // 只留最近 `changeLogMax` 条：旧条目价值掉得快，留太多只是把交付文本拉长

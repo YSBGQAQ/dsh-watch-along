@@ -167,9 +167,10 @@ export function createWatchService({
           if (sheet?.png) latestSheet = sheet
           for (const change of changeList) {
             // 兜底图（silentFloorSec 到点发的"我还在看"）不是变化事件。
-            // 判据必须是 `why === 'floor'`，**不能**用 peak —— region 模式下 peak 常被
-            // toFixed(1) 抹成 0，拿它过滤会把真实变化全丢掉（实测 11% 画面变化 0 事件）。
-            if (change?.why === 'floor') continue
+            // 判据是 change.floor —— 它来自帧上的 `via === 'floor'`，
+            // **不能**用 sheet.why（那里没有这个值，我踩过一次），也不能用 peak
+            // （region 模式下 peak 常被 toFixed(1) 抹成 0）。
+            if (change?.floor) continue
             eventQueue.add('motion', toMotion(change, sheetId))
           }
         },
