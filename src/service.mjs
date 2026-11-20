@@ -165,9 +165,10 @@ export function createWatchService({
           // 这一帧真的吐了图：留最近一张，取帧接口才不必等下一张
           if (sheet?.png) latestSheet = sheet
           for (const change of changeList) {
-            // 兜底图（silentFloorSec 到点发的"我还在看"）不是变化事件：
-            // 静止画面必须零事件，否则 AI 会被这种"什么都没发生"刷屏。
-            if (!change?.cut && !change?.peak) continue
+            // 兜底图（silentFloorSec 到点发的"我还在看"）不是变化事件。
+            // 判据必须是 `why === 'floor'`，**不能**用 peak —— region 模式下 peak 常被
+            // toFixed(1) 抹成 0，拿它过滤会把真实变化全丢掉（实测 11% 画面变化 0 事件）。
+            if (change?.why === 'floor') continue
             eventQueue.add('motion', toMotion(change, sheetId))
           }
         },
