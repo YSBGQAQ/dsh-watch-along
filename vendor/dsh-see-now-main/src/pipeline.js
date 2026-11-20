@@ -804,9 +804,11 @@ export function createPipeline(opts = {}) {
      * 第一帧就是尖峰，`flushNow()` 先把帧清空，之后 `finish()` 才走到这里）。
      * 拿不到合法 `t` 就用这一批最后一帧的时刻，语义上也对：这张图"结束于"那一刻。
      */
-    if (!Number.isFinite(t)) t = batch[batch.length - 1].t;
     const batch = frames;
     frames = [];
+    // 守卫必须放在 batch 之后：`batch` 是 const，提前访问会 TDZ 崩溃
+    // （实测 `Cannot access 'batch' before initialization`，一有尖峰就炸）。
+    if (!Number.isFinite(t)) t = batch[batch.length - 1].t;
     // region 模式：一帧一格，不走 pack 的 DP（也不做任何二次缩放）
     // **必须 return** —— `flushNow()` 靠这个返回值拿图，返回 undefined 会让它
     // 清空了 sheets 却交不出图（插话时用户什么都看不到）。
