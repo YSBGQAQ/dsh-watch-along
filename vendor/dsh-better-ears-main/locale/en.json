@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Audio",
+    "description": "Let the agent hear: speech transcription with timestamps, tempo and beat grid, key and chords, song structure, loudness, and cut-on-beat analysis — all computed locally.",
+    "detail": "docs/DETAIL.md"
+  }
+}

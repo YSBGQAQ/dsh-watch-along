@@ -1,0 +1,6 @@
+node_modules/
+promo/.venv/
+promo/audio/
+promo/frames/
+promo/out/
+.DS_Store

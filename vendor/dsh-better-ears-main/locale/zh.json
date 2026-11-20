@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "音频分析",
+    "description": "让 agent 听得见：语音转写（带时间戳）、速度与节拍网格、调性与和弦、段落结构、响度与卡点分析。全部本地计算。",
+    "detail": "docs/DETAIL.zh.md"
+  }
+}

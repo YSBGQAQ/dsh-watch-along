@@ -1,0 +1,11 @@
+{
+  "name": "dsh-better-ears",
+  "description": "Audio the agent can hear: speech, tempo and beat grid, key/chords, song structure, loudness, cut-on-beat.",
+  "version": "0.2.0",
+  "entry": {
+    "name": "dsh-better-ears",
+    "inject": [
+      "tools"
+    ]
+  }
+}
