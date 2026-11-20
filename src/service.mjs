@@ -55,7 +55,7 @@ export function createWatchService({
   encode, // (frame:{width,height,rgb}) => Buffer
   createPipeline = null, // () => { push, take, flushNow, drainChanges }
   queue = null,
-  spikeThreshold = 6,
+  spikeThreshold = 0,
   size = DEFAULT_SIZE,
   fps = 8,
   now = Date.now,
@@ -147,11 +147,12 @@ export function createWatchService({
           frames += 1
           if (!pipe) return
 
-          // 先入帧再扳机：尖峰那一帧必须进这一箱，否则事件里说的不是它。
+          // 扳机默认关闭（spikeThreshold = 0）。它是给"平时不出图、但画面突然动了"提速用的，
+          // 阈值没经过真实视频标定就先开着，会把批次切碎成 1–2 帧（实测 cells=2、where 为空）。
           const d = cheapDiff(prevBuf, buf)
           prevBuf = buf
           pipe.push({ t, buf })
-          if (d >= spikeThreshold) {
+          if (spikeThreshold > 0 && d >= spikeThreshold) {
             spikes += 1
             pipe.flushNow?.('spike')
           }
