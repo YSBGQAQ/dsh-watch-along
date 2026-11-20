@@ -1,0 +1,12 @@
+{
+  "name": "dsh-watch-along",
+  "description": "让 AI 陪你看网页直播：画面拼图 + 屏幕字幕 + 系统声音，事件走一条带时间码的队列。",
+  "version": "0.1.0",
+  "entry": {
+    "name": "dsh-watch-along",
+    "inject": [
+      "tools",
+      "attachments"
+    ]
+  }
+}

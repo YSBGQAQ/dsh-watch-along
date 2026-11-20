@@ -12,8 +12,20 @@ function savePng(shot, seq) {
   return file
 }
 
-export function createTools({ service, listWindows }) {
+export function createTools({ service, listWindows, attachments = null }) {
   let seq = 0
+
+  /** 有宿主附件服务就交图（AI 才能真的"看"）；没有就只给路径。 */
+  async function deliver(png, name) {
+    const svc = attachments?.()
+    if (!svc?.saveImage) return { ref: null, via: 'file' }
+    try {
+      const ref = await svc.saveImage.call(svc, { data: png, mediaType: 'image/png', name })
+      return { ref, via: 'attachment' }
+    } catch (e) {
+      return { ref: null, via: 'file', attachmentError: String(e?.message ?? e) }
+    }
+  }
 
   return [
     {
@@ -55,6 +67,7 @@ export function createTools({ service, listWindows }) {
         const shot = await service.frame({ live: args.live !== false })
         seq += 1
         const file = savePng(shot, seq)
+        const { ref, via, attachmentError } = await deliver(shot.png, `watch-along-${seq}.png`)
         return {
           width: shot.width,
           height: shot.height,
@@ -62,6 +75,9 @@ export function createTools({ service, listWindows }) {
           at: shot.at,
           pngBytes: shot.png.length,
           file,
+          ref,
+          via,
+          ...(attachmentError ? { attachmentError } : {}),
         }
       },
     },

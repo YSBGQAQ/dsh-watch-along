@@ -46,6 +46,30 @@ test('watch_start 把窗口名转给门面，失败时如实抛错', async () =>
   )
 })
 
+test('有附件服务时，图交给附件；没有时退回文件路径', async () => {
+  const saved = []
+  const withAtt = createTools({
+    service: fakeService(),
+    listWindows: () => [],
+    attachments: () => ({
+      async saveImage(arg) {
+        saved.push(arg)
+        return { kind: 'image', id: 'img-1' }
+      },
+    }),
+  })
+  const out1 = await withAtt.find((t) => t.name === 'watch_frame').execute({})
+  assert.equal(out1.via, 'attachment')
+  assert.deepEqual(out1.ref, { kind: 'image', id: 'img-1' })
+  assert.equal(saved.length, 1)
+  assert.equal(saved[0].mediaType, 'image/png')
+
+  const without = createTools({ service: fakeService(), listWindows: () => [], attachments: () => null })
+  const out2 = await without.find((t) => t.name === 'watch_frame').execute({})
+  assert.equal(out2.via, 'file')
+  assert.equal(out2.ref, null)
+})
+
 test('watch_frame 返回尺寸与时间码，不把整张图塞进 JSON', async () => {
   const tools = createTools({ service: fakeService(), listWindows: () => [] })
   const out = await tools.find((t) => t.name === 'watch_frame').execute({ live: true })
