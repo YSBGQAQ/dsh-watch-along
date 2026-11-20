@@ -4,6 +4,7 @@ import path from 'node:path'
 import { createWatchService } from '../src/service.mjs'
 import { listWindows, lookupWindow } from '../src/windows.mjs'
 import { startCapture } from '../src/capture.mjs'
+import { encode } from '../src/png.mjs'
 
 const want = process.argv[2]
 
@@ -17,7 +18,7 @@ const outDir = path.join(process.cwd(), '.scratch', 'smoke')
 fs.mkdirSync(outDir, { recursive: true })
 
 const svc = createWatchService({
-  listWindows, lookupWindow, startCapture,
+  listWindows, lookupWindow, startCapture, encode,
   onCaptureStderr: (s) => process.stderr.write(s),
 })
 const t0 = Date.now()

@@ -1,22 +1,24 @@
 // WatchService —— 这个插件的唯一门面。
 //
 // 工具（给 AI）与 HTTP（给手机）都只是它的薄适配器；测试也只打这里。
-// 屏幕、窗口、时间都是注入进来的，所以测试不需要真屏幕。
-import { encodePng } from '../vendor/dsh-streamvision-main/lib/native.js'
-
+// 屏幕、窗口、时间、PNG 编码全是注入的 —— 所以测试不需要真屏幕，也不加载 koffi。
 const DEFAULT_SIZE = { width: 798, height: 450 }
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 export function createWatchService({
   listWindows,
   lookupWindow,
   startCapture,
+  encode, // (frame:{width,height,rgb}) => Buffer
   size = DEFAULT_SIZE,
   fps = 8,
   now = Date.now,
   onCaptureStderr = null,
 } = {}) {
+  if (typeof encode !== 'function') throw new Error('createWatchService 需要注入 encode（PNG 编码器）')
+
   let capture = null
-  let latest = null
+  let latest = null // { t, at, buf }
   let title = null
   let startedAt = null
   let state = 'idle'
@@ -30,8 +32,9 @@ export function createWatchService({
       reason,
       frames,
       since: startedAt,
-      region: capture?.arg?.region ?? null,
-      size: capture?.arg ? { width: capture.arg.width, height: capture.arg.height } : null,
+      fps: capture ? capture.params.fps : null,
+      region: capture ? capture.params.region : null,
+      size: capture ? { width: capture.params.width, height: capture.params.height } : null,
     }
   }
 
@@ -49,6 +52,13 @@ export function createWatchService({
     state = 'idle'
     reason = null
     return status()
+  }
+
+  /** 采集流断了就是故障：GLOSSARY 里写死「任何结束都按故障处理」。 */
+  function onCaptureEnded(info) {
+    if (!capture) return // 主动 stop 触发的，不算故障
+    state = 'failed'
+    reason = info instanceof Error ? String(info.message ?? info) : '采集结束'
   }
 
   async function start({ window: want, size: askSize } = {}) {
@@ -75,8 +85,9 @@ export function createWatchService({
         height: dim.height,
         fps,
         onStderr: onCaptureStderr ?? undefined,
+        onClose: onCaptureEnded,
         onFrame: ({ t, buf }) => {
-          latest = { t, buf, width: dim.width, height: dim.height, at: now() }
+          latest = { t, at: now(), buf }
           frames += 1
         },
       })
@@ -94,22 +105,30 @@ export function createWatchService({
     return status()
   }
 
+  /**
+   * 取一张画面。
+   * `live: true` 会等一个「调用之后才到达」的帧 —— 否则拿到的可能是几百毫秒前的旧帧。
+   * `live: false` 用手上最新的帧，立即返回。
+   */
   async function frame({ live = false, timeoutMs = 3000 } = {}) {
-    void live // 流式采集下「最新一帧」就是此刻，无需另行触发
-    if (!capture) throw new Error('还没开始监听：先调用 watch_start')
+    if (!capture) throw new Error('还没开始采集：先调用 watch_start')
 
-    const deadline = now() + timeoutMs
-    while (!latest && now() < deadline) {
-      await new Promise((r) => setTimeout(r, 10))
-    }
-    if (!latest) {
-      state = 'failed'
-      reason = '采不到帧'
-      throw new Error(`采不到帧（等了 ${timeoutMs}ms）`)
+    const cutoff = now()
+    const deadline = cutoff + timeoutMs
+    while (!latest || (live && latest.at < cutoff)) {
+      if (now() > deadline) {
+        state = 'failed'
+        reason = '采不到帧'
+        throw new Error(`采不到帧（等了 ${timeoutMs}ms）`)
+      }
+      await sleep(10)
     }
 
-    const { buf, width, height, t, at } = latest
-    return { png: encodePng({ width, height, rgb: buf }), width, height, t, at }
+    const { buf, t, at } = latest
+    const { width, height } = capture.params
+    // t = 相对采集开始的秒数；at = 墙上时间(epoch ms)。两个都要：前者对齐音频，
+    // 后者跨进程可读（见 ADR 0003 关于时间码的决定）。
+    return { png: encode({ width, height, rgb: buf }), width, height, t, at }
   }
 
   return { start, stop, frame, status }

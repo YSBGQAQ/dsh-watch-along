@@ -12,10 +12,10 @@ function fakeService(over = {}) {
   }
 }
 
-test('四个工具都注册出来，且带描述与参数', () => {
+test('五个工具都注册出来，且带描述与参数', () => {
   const tools = createTools({ service: fakeService(), listWindows: () => ['A', 'B'] })
   const names = tools.map((t) => t.name)
-  assert.deepEqual(names, ['watch_windows', 'watch_start', 'watch_frame', 'watch_stop'])
+  assert.deepEqual(names, ['watch_windows', 'watch_start', 'watch_frame', 'watch_status', 'watch_stop'])
   for (const t of tools) {
     assert.ok(t.description?.length > 5, `${t.name} 缺描述`)
     assert.equal(t.parameters.type, 'object')

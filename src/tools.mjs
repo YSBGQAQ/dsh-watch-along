@@ -66,6 +66,14 @@ export function createTools({ service, listWindows }) {
       },
     },
     {
+      name: 'watch_status',
+      description: '看当前状态：在盯哪个窗口、跑没跑、为什么失败。',
+      parameters: { type: 'object', properties: {} },
+      async execute() {
+        return service.status()
+      },
+    },
+    {
       name: 'watch_stop',
       description: '停止陪看，释放采集。',
       parameters: { type: 'object', properties: {} },

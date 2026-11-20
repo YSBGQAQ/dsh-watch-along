@@ -23,12 +23,14 @@ export function startCapture({ region, width, height, fps = 8, onFrame, onStderr
     onStderr,
   })
 
-  handle.done
-    .then((info) => onClose?.(info))
-    .catch((err) => onClose?.(err))
+  // 不管正常收尾还是异常退出，都要报给上层 —— 静默结束是最坏的失败模式。
+  handle.done.then(
+    (info) => onClose?.(info),
+    (err) => onClose?.(err),
+  )
 
   return {
-    arg: { region, width, height, fps },
+    params: { region, width, height, fps },
     stop: () => handle.stop?.(),
   }
 }
