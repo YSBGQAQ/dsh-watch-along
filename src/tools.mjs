@@ -5,14 +5,14 @@ import path from 'node:path'
 
 const RUN_DIR = path.resolve('.scratch', 'run', 'frames')
 
-function savePng(shot, seq) {
-  fs.mkdirSync(RUN_DIR, { recursive: true })
-  const file = path.join(RUN_DIR, `frame_${String(seq).padStart(4, '0')}.png`)
+function savePng(shot, seq, dir) {
+  fs.mkdirSync(dir, { recursive: true })
+  const file = path.join(dir, `frame_${String(seq).padStart(4, '0')}.png`)
   fs.writeFileSync(file, shot.png)
   return file
 }
 
-export function createTools({ service, listWindows, attachments = null }) {
+export function createTools({ service, listWindows, attachments = null, outDir = RUN_DIR }) {
   let seq = 0
 
   /** 有宿主附件服务就交图（AI 才能真的"看"）；没有就只给路径。 */
@@ -66,7 +66,7 @@ export function createTools({ service, listWindows, attachments = null }) {
       async execute(args = {}) {
         const shot = await service.frame({ live: args.live !== false })
         seq += 1
-        const file = savePng(shot, seq)
+        const file = savePng(shot, seq, outDir)
         const { ref, via, attachmentError } = await deliver(shot.png, `watch-along-${seq}.png`)
         return {
           width: shot.width,

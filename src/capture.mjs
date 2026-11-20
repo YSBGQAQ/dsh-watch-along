@@ -13,6 +13,9 @@ export function startCapture({ region, width, height, fps = 8, onFrame, onStderr
 
   const handle = spawnFrames({
     source: box ? { kind: 'screen', region: box } : { kind: 'screen' },
+    // 区间抓取必须按 hidpi 走：gdigrab 在未声明 DPI 感知的子进程里拿到的是逻辑坐标，
+    // 而区域来自声明了 Per-Monitor-V2 的主进程（物理像素），不声明就会抓错位置。
+    dpi: region ? 'hidpi' : undefined,
     width,
     height,
     fps,

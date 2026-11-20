@@ -100,6 +100,19 @@ export function screenSize() {
   return { width: GetSystemMetrics(0), height: GetSystemMetrics(1) }
 }
 
+const cache = {}
+
+/** 系统 DPI（未做 Per-Monitor 换算的基准值）；拿不到就按 96。 */
+export function dpiForSystem() {
+  try {
+    const GetDpiForSystem = (cache.GetDpiForSystem ??= user32.func('uint GetDpiForSystem()'))
+    const dpi = GetDpiForSystem()
+    return dpi > 0 ? dpi : 96
+  } catch {
+    return 96
+  }
+}
+
 /**
  * 抓一帧并缩到 outW x outH（最近邻采样，够用且快）。
  * @returns {{width:number,height:number,rgb:Buffer,full:{width:number,height:number}}}
