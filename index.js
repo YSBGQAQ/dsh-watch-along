@@ -7,6 +7,11 @@ import { createTools } from './src/tools.mjs'
 import { listWindows, lookupWindow } from './src/windows.mjs'
 import { startCapture } from './src/capture.mjs'
 import { encode } from './src/png.mjs'
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const HERE = path.dirname(fileURLToPath(import.meta.url))
 
 export const name = 'dsh-watch-along'
 export const inject = ['tools']
@@ -17,6 +22,17 @@ export function apply(ctx) {
       (ctx.logger?.info ?? ctx.logger?.log ?? (() => {}))(`[watch-along] ${m}`)
     } catch {
       /* 日志失败不能影响插件加载 */
+    }
+  }
+
+  /** 落一份文件日志：宿主日志不落地时，这是唯一能确认"加载过"的证据。 */
+  const trace = (m) => {
+    try {
+      const f = path.join(HERE, '.scratch', 'run', 'plugin.log')
+      fs.mkdirSync(path.dirname(f), { recursive: true })
+      fs.appendFileSync(f, `${new Date().toISOString()} ${m}\n`)
+    } catch {
+      /* 写不进就算了 */
     }
   }
 
@@ -45,6 +61,8 @@ export function apply(ctx) {
     disposers.push(ctx.tools.register(tool))
     log(`已注册工具 ${tool.name}`)
   }
+
+  trace(`apply 完成：注册 ${tools.length} 个工具（${tools.map((t) => t.name).join(',')}）`)
 
   ctx.on?.('dispose', () => {
     for (const d of disposers.reverse()) {
