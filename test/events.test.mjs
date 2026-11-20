@@ -35,6 +35,10 @@ test('按 sinceId 只给新的，nextId 指向上一条已给', () => {
   const none = q.read({ sinceId: 3 })
   assert.equal(none.events.length, 0)
   assert.equal(none.nextId, 3)
+  assert.equal(none.quiet, true, '没动静要明确说出来')
+
+  const busy = q.read({ sinceId: 0 })
+  assert.equal(busy.quiet, false, '有事件时不能 quiet')
 })
 
 test('落后太多时标记 staleSince，并从最旧给起（不跳过中间）', () => {
@@ -46,6 +50,7 @@ test('落后太多时标记 staleSince，并从最旧给起（不跳过中间）
   assert.equal(got.events[0].id, 8, '应该从内存里最旧的那条(8)开始')
   assert.equal(got.events.length, 5)
   assert.equal(got.dropped, 7)
+  assert.equal(got.quiet, false, '落后不等于安静')
 })
 
 test('超出容量丢最旧，但 highWater 不回收', () => {

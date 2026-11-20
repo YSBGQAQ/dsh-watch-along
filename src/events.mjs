@@ -47,6 +47,9 @@ export function createEventQueue({ capacity = 500, now = Date.now, startedAt = n
       staleSince,
       highWater,
       dropped,
+      // 明确的"没动静"：让调用方不用猜是真安静还是坏了。
+      // 落后（staleSince）不算 quiet —— 那说明有事件但你看丢了。
+      quiet: picked.length === 0 && !staleSince,
     }
   }
 
