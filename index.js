@@ -7,6 +7,7 @@ import { createTools } from './src/tools.mjs'
 import { listWindows, lookupWindow } from './src/windows.mjs'
 import { startCapture } from './src/capture.mjs'
 import { encode } from './src/png.mjs'
+import { createPipeline } from './vendor/dsh-see-now-main/src/pipeline.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -41,6 +42,9 @@ export function apply(ctx) {
     lookupWindow,
     startCapture,
     encode,
+    // 判据、档位、拼图全部来自参考库；打开 changeLog 才有"每张图一条变化摘要"可读。
+    createPipeline: () =>
+      createPipeline({ width: 798, height: 450, fps: 8, changeLog: true, changeLogMax: 500 }),
     onCaptureStderr: (s) => log(`ffmpeg: ${String(s).trim().slice(0, 300)}`),
   })
 

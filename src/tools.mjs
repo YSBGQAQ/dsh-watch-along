@@ -82,6 +82,25 @@ export function createTools({ service, listWindows, attachments = null, outDir =
       },
     },
     {
+      name: 'watch_events',
+      description:
+        '读画面/字幕/声音的事件流。传上次拿到的 nextId 作 sinceId 续读；wait 秒数内没新事件会返回 timedOut。',
+      parameters: {
+        type: 'object',
+        properties: {
+          sinceId: { type: 'number', description: '上次收到的 nextId，首次不传' },
+          wait: { type: 'number', description: '长轮询最多等几秒，默认 20' },
+        },
+      },
+      async execute(args = {}) {
+        const waitSec = Number.isFinite(args.wait) ? Math.max(0, args.wait) : 20
+        return service.events({
+          sinceId: Number.isFinite(args.sinceId) ? args.sinceId : null,
+          waitMs: Math.round(waitSec * 1000),
+        })
+      },
+    },
+    {
       name: 'watch_status',
       description: '看当前状态：在盯哪个窗口、跑没跑、为什么失败。',
       parameters: { type: 'object', properties: {} },

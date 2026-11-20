@@ -1,15 +1,56 @@
 // WatchService —— 这个插件的唯一门面。
 //
 // 工具（给 AI）与 HTTP（给手机）都只是它的薄适配器；测试也只打这里。
-// 屏幕、窗口、时间、PNG 编码全是注入的 —— 所以测试不需要真屏幕，也不加载 koffi。
+// 屏幕、窗口、时间、PNG 编码、pipeline 全是注入的 —— 所以测试不需要真屏幕，也不加载 koffi。
+import { createEventQueue } from './events.mjs'
+
 const DEFAULT_SIZE = { width: 798, height: 450 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+/** 便宜差分：只用来决定"要不要立刻逼一张图"，真正的判定仍在 pipeline 里。 */
+function cheapDiff(prev, cur) {
+  if (!prev || prev.length !== cur.length) return 0
+  const stride = Math.max(3, Math.floor(cur.length / 3000))
+  let sum = 0
+  let n = 0
+  for (let i = 0; i + 2 < cur.length; i += stride) {
+    sum += Math.abs(cur[i] - prev[i])
+    n += 1
+  }
+  return n ? sum / n : 0
+}
+
+function classify(peak) {
+  if (peak >= 18) return 'high'
+  if (peak >= 10) return 'medium'
+  return 'low'
+}
+
+function toMotion(change, sheetId) {
+  const box = change?.box ?? null
+  const where = box && box.x != null
+    ? `${Math.round((box.x + box.w / 2) * 100)}%,${Math.round((box.y + box.h / 2) * 100)}%`
+    : null
+  return {
+    strength: classify(change?.peak ?? 0),
+    where,
+    peak: change?.peak ?? 0,
+    cells: change?.n ?? 0,
+    cut: Boolean(change?.cut),
+    from: change?.from ?? null,
+    to: change?.to ?? null,
+    sheetId: sheetId ?? null,
+  }
+}
 
 export function createWatchService({
   listWindows,
   lookupWindow,
   startCapture,
   encode, // (frame:{width,height,rgb}) => Buffer
+  createPipeline = null, // () => { push, take, flushNow, drainChanges }
+  queue = null,
+  spikeThreshold = 6,
   size = DEFAULT_SIZE,
   fps = 8,
   now = Date.now,
@@ -17,13 +58,17 @@ export function createWatchService({
 } = {}) {
   if (typeof encode !== 'function') throw new Error('createWatchService 需要注入 encode（PNG 编码器）')
 
+  const eventQueue = queue ?? createEventQueue({ now })
   let capture = null
+  let pipe = null
   let latest = null // { t, at, buf }
+  let prevBuf = null
   let title = null
   let startedAt = null
   let state = 'idle'
   let reason = null
   let frames = 0
+  let spikes = 0
 
   function status() {
     return {
@@ -46,6 +91,8 @@ export function createWatchService({
     }
     capture = null
     latest = null
+    pipe = null
+    prevBuf = null
     title = null
     startedAt = null
     frames = 0
@@ -79,6 +126,8 @@ export function createWatchService({
     const dim = askSize ?? size
     state = 'starting'
     try {
+      pipe = createPipeline ? createPipeline() : null
+      prevBuf = null
       capture = startCapture({
         region: rect,
         width: dim.width,
@@ -89,6 +138,22 @@ export function createWatchService({
         onFrame: ({ t, buf }) => {
           latest = { t, at: now(), buf }
           frames += 1
+          if (!pipe) return
+
+          // 先入帧再扳机：尖峰那一帧必须进这一箱，否则事件里说的不是它。
+          const d = cheapDiff(prevBuf, buf)
+          prevBuf = buf
+          pipe.push({ t, buf })
+          if (d >= spikeThreshold) {
+            spikes += 1
+            pipe.flushNow?.('spike')
+          }
+
+          const sheets = pipe.take?.() ?? []
+          const sheetId = Array.isArray(sheets) ? (sheets[0]?.id ?? null) : (sheets?.id ?? null)
+          for (const change of pipe.drainChanges?.() ?? []) {
+            eventQueue.add('motion', toMotion(change, sheetId))
+          }
         },
       })
     } catch (e) {
@@ -131,5 +196,11 @@ export function createWatchService({
     return { png: encode({ width, height, rgb: buf }), width, height, t, at }
   }
 
-  return { start, stop, frame, status }
+  /** 读事件。`waitMs > 0` 走长轮询，没事件就等到点返回 timedOut。 */
+  async function events({ sinceId = null, waitMs = 0, limit = 100 } = {}) {
+    if (waitMs > 0) return eventQueue.wait({ sinceId, waitMs, limit })
+    return { ...eventQueue.read({ sinceId, limit }), timedOut: false }
+  }
+
+  return { start, stop, frame, status, events }
 }
