@@ -797,6 +797,14 @@ export function createPipeline(opts = {}) {
 
   function flush(t, why) {
     if (!frames.length) return;
+    /**
+     * **`t` 可能不是一个数字**：`finish()` 发最后一张时传的是 `lastBound`，而它初始是
+     * `-Infinity` —— 整段素材都没触发过积分点时，收尾那张图的 `at` 就成了 `-Infinity`，
+     * 前面 `+sheet.at.toFixed(2)` 直接抛 `toFixed is not a function`（实测：陪看插件
+     * 第一帧就是尖峰，`flushNow()` 先把帧清空，之后 `finish()` 才走到这里）。
+     * 拿不到合法 `t` 就用这一批最后一帧的时刻，语义上也对：这张图"结束于"那一刻。
+     */
+    if (!Number.isFinite(t)) t = batch[batch.length - 1].t;
     const batch = frames;
     frames = [];
     // region 模式：一帧一格，不走 pack 的 DP（也不做任何二次缩放）
@@ -1073,6 +1081,14 @@ export function createPipeline(opts = {}) {
     if (o.floorGapK > 0 && gapEwma > 0) {
       floorSec = Math.min(o.floorMax, Math.max(o.floorMin, o.floorGapK * gapEwma));
     }
+    if (!Number.isFinite(lastBound)) lastBound = entry.t;
+    /**
+     * 兜底要**先补一个时间点再判**。`lastBound` 只在"积分攒够、真的留下帧"时才前进，
+     * 所以一段素材里可能整段都没动过 —— 它停在 `-Infinity` 时 `entry.t - lastBound`
+     * 恒等于 `Infinity`，兜底第一帧就被触发（陪看插件实测：第一帧即出图，之后的图
+     * 全挂在 `flushNow('spike')` 上，`checkFlush` 的"攒够 3 帧 / 20 秒"永远轮不到）。
+     */
+    if (!Number.isFinite(lastBound)) lastBound = entry.t;
     if (entry.t - lastBound >= floorSec) keep(entry, 'floor');
   }
 
@@ -1127,7 +1143,19 @@ export function createPipeline(opts = {}) {
       while (frames.length && guard < 64) {
         guard += 1;
         const segs = splitOneBin(seqOf(frames), { binCost: o.binCost, packMode: o.packMode, crop: cropBudget });
-        if (segs.length <= 1) { flush(lastBound, 'end'); break; }
+        if (segs.length <= 1) {
+          /**
+           * 收尾要发的是**这一批最后一帧**，而不是 `lastBound`（积分点）。
+           *
+           * `lastBound` 只在"积分攒够、留下帧"时才前进。陪看插件每帧先 `push` 再扳机
+           * （`flushNow('spike')`），一出现尖峰批次就被清空 —— 于是 `lastBound` 可能整段
+           * 都没动过，第一帧就是 `-Infinity`，`sheet.at` 不是数字，`noteChange` 里
+           * `+sheet.at.toFixed(2)` 抛错（实测：WorkBuddy 窗口第一帧即崩）。
+           */
+          const tail = frames[frames.length - 1]
+          flush(Number.isFinite(lastBound) ? lastBound : tail.t, 'end')
+          break
+        }
         const keep = segs[0].length;
         const carry = frames.slice(keep);
         frames = frames.slice(0, keep);

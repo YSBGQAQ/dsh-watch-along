@@ -27,15 +27,20 @@ function classify(peak) {
 }
 
 function toMotion(change, sheetId) {
+  // pipeline 给的是网格归一化后的四角 {x0,y0,x1,y1}（0..1），不是 {x,y,w,h}。
   const box = change?.box ?? null
-  const where = box && box.x != null
-    ? `${Math.round((box.x + box.w / 2) * 100)}%,${Math.round((box.y + box.h / 2) * 100)}%`
+  const where = box && Number.isFinite(box.x0)
+    ? `${Math.round(((box.x0 + box.x1) / 2) * 100)}%,${Math.round(((box.y0 + box.y1) / 2) * 100)}%`
     : null
+  // 注意：region 模式下 peak 常见量级是 1e-3，再被 toFixed(1) 抹成 0，
+  // 所以分档用「切点 + 参与帧数」这两个可靠的量，peak 只原样透传供以后标定。
+  const cells = change?.n ?? 0
+  const strength = change?.cut ? 'high' : cells >= 12 ? 'high' : cells >= 4 ? 'medium' : 'low'
   return {
-    strength: classify(change?.peak ?? 0),
+    strength,
     where,
     peak: change?.peak ?? 0,
-    cells: change?.n ?? 0,
+    cells,
     cut: Boolean(change?.cut),
     from: change?.from ?? null,
     to: change?.to ?? null,
@@ -152,6 +157,9 @@ export function createWatchService({
           const sheets = pipe.take?.() ?? []
           const sheetId = Array.isArray(sheets) ? (sheets[0]?.id ?? null) : (sheets?.id ?? null)
           for (const change of pipe.drainChanges?.() ?? []) {
+            // 兜底图（silentFloorSec 到点发的"我还在看"）不是变化事件：
+            // 静止画面必须零事件，否则 AI 会被这种"什么都没发生"刷屏。
+            if (!change?.cut && !change?.peak) continue
             eventQueue.add('motion', toMotion(change, sheetId))
           }
         },

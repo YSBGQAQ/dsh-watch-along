@@ -52,7 +52,7 @@ test('画面一变，队列里就有一条 motion 事件，带强度/位置/变�
       startCapture: frameSource({ valueAt: (i) => (i >= 2 ? 200 : 0) }),
       createPipeline: () =>
         fakePipeline({
-          change: { peak: 21, n: 37, cut: true, from: 0.2, to: 0.5, box: { x: 0.5, y: 0.8, w: 0.2, h: 0.1 } },
+          change: { peak: 21, n: 37, cut: true, from: 0.2, to: 0.5, box: { x0: 0.5, y0: 0.8, x1: 0.7, y1: 0.9 } },
         }),
     }),
   )
@@ -66,7 +66,7 @@ test('画面一变，队列里就有一条 motion 事件，带强度/位置/变�
   assert.equal(e.strength, 'high')
   assert.equal(e.cells, 37)
   assert.equal(e.cut, true)
-  assert.match(e.where, /%/)
+  assert.equal(e.where, "60%,85%")
   await svc.stop()
 })
 
