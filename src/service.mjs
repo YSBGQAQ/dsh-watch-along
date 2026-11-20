@@ -67,6 +67,7 @@ export function createWatchService({
   let capture = null
   let pipe = null
   let latest = null // { t, at, buf }
+  let latestSheet = null // 最近一张真拼出来的图（pipeline 出图时才更新）
   let prevBuf = null
   let title = null
   let startedAt = null
@@ -96,6 +97,7 @@ export function createWatchService({
     }
     capture = null
     latest = null
+    latestSheet = null
     pipe = null
     prevBuf = null
     title = null
@@ -154,9 +156,15 @@ export function createWatchService({
             pipe.flushNow?.('spike')
           }
 
-          const sheets = pipe.take?.() ?? []
-          const sheetId = Array.isArray(sheets) ? (sheets[0]?.id ?? null) : (sheets?.id ?? null)
-          for (const change of pipe.drainChanges?.() ?? []) {
+          // 变化摘要在「图被截走」和「图还在队列里等下一张」两种情况下都会产生。
+          // 必须先读再 take()：没出图的那一帧攒下的摘要，会在下一次出图时被
+          // take() + 后面的摘要一起挤掉，事件流就等于被本帧的 tick 节奏吃光（实测 30 秒 0 条）。
+          const changeList = pipe.drainChanges?.() ?? []
+          const sheet = pipe.take?.() ?? null
+          const sheetId = Array.isArray(sheet) ? (sheet[0]?.id ?? null) : (sheet?.id ?? null)
+          // 这一帧真的吐了图：留最近一张，取帧接口才不必等下一张
+          if (sheet?.png) latestSheet = sheet
+          for (const change of changeList) {
             // 兜底图（silentFloorSec 到点发的"我还在看"）不是变化事件：
             // 静止画面必须零事件，否则 AI 会被这种"什么都没发生"刷屏。
             if (!change?.cut && !change?.peak) continue
@@ -210,5 +218,27 @@ export function createWatchService({
     return { ...eventQueue.read({ sinceId, limit }), timedOut: false }
   }
 
-  return { start, stop, frame, status, events }
+  /** 原始帧（rgb24）直出：保留「此刻屏幕上是什么」的全部信息，给合成图之类的下游用。 */
+  async function rawFrame({ live = false, timeoutMs = 3000 } = {}) {
+    if (!capture) throw new Error('还没开始采集：先调用 watch_start')
+    const cutoff = now()
+    const deadline = cutoff + timeoutMs
+    while (!latest || (live && latest.at < cutoff)) {
+      if (now() > deadline) {
+        state = 'failed'
+        reason = '采不到帧'
+        throw new Error(`采不到帧（等了 ${timeoutMs}ms）`)
+      }
+      await sleep(10)
+    }
+    const { width, height } = capture.params
+    return { ...latest, width, height }
+  }
+
+  /** pipeline 最近一张拼图（可能为 null：还没攒够一箱）。 */
+  function sheet() {
+    return latestSheet
+  }
+
+  return { start, stop, frame, rawFrame, sheet, status, events }
 }
