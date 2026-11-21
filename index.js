@@ -125,7 +125,7 @@ export function apply(ctx, opts = {}) {
   const subtitle = createSubtitleReader({
     encode,
     recognize,
-    intervalMs: 500, // 字幕只活 1.5–2 秒：一轮必须 ≪ 它，否则凑不齐两次一致（实测只出水印）
+    intervalMs: 700, // 字幕只活 1.5–2 秒：一轮必须 ≪ 它，否则凑不齐两次一致（实测只出水印）
     onEvent: (e) => {
       if (e?.error) return log(`字幕通道：${e.error}`)
       svcRef?.emit('ocr', e)
