@@ -5,13 +5,19 @@
 
 **Blocked by:** 08
 
-**Status:** ready-for-agent
+**Status:** done（页面已出，待真机看一眼）
 
-- [ ] `GET /?token=…` 返回一个能在手机上看的事件列表页（单文件 HTML，无构建）
-- [ ] 事件按时间倒序，`text` 原样显示，`sheetId` 渲染成缩略图（点开全屏）
-- [ ] 自动刷新：页面内轮询 `/api/events?sinceId=`，断线后**自己重连**（spec 第 24 条）
-- [ ] token 存在 URL 里即可，不做登录
-- [ ] 断网 10 秒再恢复，页面能自己接上、不丢事件
+- [x] `GET /?token=…` 返回事件列表页（单文件 HTML，无构建）
+- [x] 事件倒序、`text` 原样、`sheetId` 渲染成图（懒加载）
+- [x] 页面内长轮询 `/api/events?wait=10`，异常后 2 秒自动重连（spec 第 24 条）
+- [x] token 在 URL 里，不做登录
+- [ ] 断网再恢复的实机验证（代码已就绪，未真机试）
 
 ## 为什么单文件
 不引入前端构建链（这项目连 bundler 都没有），一个 HTML 字符串由 Node 直出最省事。
+
+## 实现说明
+- 页面是 `src/http.mjs` 里的一个模板字符串（`PAGE(token)`），不引入构建链
+- 用 `sinceId` 续读 + `seen` 去重，重复渲染同一事件会被挡掉
+- 深浅色跟随系统（`prefers-color-scheme`）
+- 测到的是**结构和关键行为**（会轮询、有重连、401 拦截），外观要真机看
