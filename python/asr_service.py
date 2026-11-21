@@ -36,6 +36,8 @@ RATE = 16000
 KEEP_SEC = 20.0    # 缓冲只留最近 20 秒：够给上下文，又不至于每次转太久
 MARGIN_SEC = 0.8   # 句尾离缓冲边缘太近的先不发 —— 它可能还没说完
 SEEN_MAX = 200     # 记住最近 200 句的归一化文本
+PREROLL_SEC = 1.5  # 每次送音频前留的前摇：只为给模型上下文，落在里面的话不交付
+MAX_SLICE_SEC = 30.0  # 单次最多送多少秒，防止长时间没调用后一次吃到巨量音频
 
 DUMP = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".scratch", "run", "asr-out.jsonl"
@@ -80,6 +82,11 @@ def load():
     global MODEL
     if MODEL is not None:
         return MODEL
+    if not os.path.isdir(MODEL_DIR):
+        raise RuntimeError(
+            f"模型目录不存在：{MODEL_DIR}\n"
+            "  修法：set WATCH_ALONG_WHISPER_DIR=<含 model.bin 的那个目录>"
+        )
     _register_cuda_dlls()
     from faster_whisper import WhisperModel
 
@@ -233,29 +240,50 @@ def transcribe(audio):
 
 
 def pull():
-    """转写当前缓冲，交付"已经说完且没发过"的句子。不录音 —— 录音在另一个线程里跑。"""
+    """转写"上次之后的新音频"，只交付已经说完的句子。
+
+    ## 为什么不是"整段重转"（2026-11-21 改）
+
+    以前每次把整个 20 秒缓冲重转一遍。缓冲每滑一次，Whisper 就把同一段音频**重新切分**，
+    切法变了，于是同一句话以不同形状反复出现 —— 文本去重、时间水位都只能事后补救
+    （实测 5 分钟 26 条重复）。
+
+    现在：只送「上次交付点之前 1.5 秒 + 之后的新音频」，**每段音频只转一次**。
+    前摇那 1.5 秒只为给模型上下文，落在这段里的句子不交付。
+    """
     start_capture()
     buf = ACC["buf"]
-    total = len(buf) / RATE
+    base = ACC["base"]
+    end_abs = base + len(buf) / RATE
 
     if ACC["error"]:
-        return {"lines": [], "ms": 0, "silent": True, "rms": 0.0, "total": round(total, 2), "error": ACC["error"]}
-    if total < 1.0:
-        return {"lines": [], "ms": 0, "silent": True, "rms": 0.0, "total": round(total, 2)}
+        return {"lines": [], "ms": 0, "silent": True, "rms": 0.0, "total": round(len(buf) / RATE, 2),
+                "error": ACC["error"]}
 
-    rms = float(np.sqrt(np.mean(buf**2)))
+    # 从哪儿开始转：cursor 往前留一点前摇；第一次就从头
+    start_abs = max(base, ACC["emitted_until"] - PREROLL_SEC)
+    # 追不上时（比如长时间没调用）别一次送太多，最多 MAX_SLICE 秒
+    if end_abs - start_abs > MAX_SLICE_SEC:
+        start_abs = end_abs - MAX_SLICE_SEC
+
+    i0 = max(0, int((start_abs - base) * RATE))
+    audio = buf[i0:]
+    if len(audio) < RATE * 1.0:
+        return {"lines": [], "ms": 0, "silent": True, "rms": 0.0, "total": round(len(buf) / RATE, 2)}
+
+    rms = float(np.sqrt(np.mean(audio**2)))
     if rms < 0.001:
-        return {"lines": [], "ms": 0, "silent": True, "rms": round(rms, 5), "total": round(total, 2)}
+        return {"lines": [], "ms": 0, "silent": True, "rms": round(rms, 5), "total": round(len(buf) / RATE, 2)}
 
-    res = transcribe(buf)
+    res = transcribe(audio)
     done = []
     for line in res["lines"]:
-        t0 = ACC["base"] + float(line["t0"])
-        t1 = ACC["base"] + float(line["t1"])
-        if t1 > ACC["base"] + total - MARGIN_SEC:
+        t0 = start_abs + float(line["t0"])
+        t1 = start_abs + float(line["t1"])
+        if t1 <= ACC["emitted_until"]:
+            continue  # 落在前摇里：已经交付过，或只是给上下文用的
+        if t1 > end_abs - MARGIN_SEC:
             continue  # 尾巴还没说完
-        if t1 <= ACC["emitted_until"] + 0.05:
-            continue  # 已经交付过（时间水位是绝对的）
         key = _norm(line["text"])
         if not key or _looks_hallucinated(line["text"]) or _is_dup(key):
             continue
@@ -266,14 +294,18 @@ def pull():
             ACC["seen"] = ACC["seen"][-SEEN_MAX:]
         ACC["emitted_until"] = max(ACC["emitted_until"], t1)
 
-    # 裁剪缓冲：只前移 base，水位是绝对时间，不用再动
-    if total > KEEP_SEC:
-        drop = total - KEEP_SEC
+    # 没交付任何句子时也要把 cursor 往前推，否则下次还会重转同一段（那就是老问题）
+    if not done and end_abs - ACC["emitted_until"] > 6.0:
+        ACC["emitted_until"] = end_abs - MARGIN_SEC
+
+    # 裁剪缓冲：只前移 base（cursor 是绝对时间，不用动）
+    if len(buf) / RATE > KEEP_SEC:
+        drop = len(buf) / RATE - KEEP_SEC
         ACC["buf"] = buf[int(drop * RATE):]
         ACC["base"] += drop
-        total = KEEP_SEC
 
-    return {"lines": done, "ms": res["ms"], "silent": False, "rms": round(rms, 5), "total": round(total, 2)}
+    return {"lines": done, "ms": res["ms"], "silent": False, "rms": round(rms, 5),
+            "total": round(len(ACC["buf"]) / RATE, 2)}
 
 
 def reset():
