@@ -303,6 +303,23 @@ def pull():
 
     # 没交付任何句子时也要把 cursor 往前推，否则下次还会重转同一段（那就是老问题）
     if not done and end_abs - ACC["emitted_until"] > 6.0:
+        # 调试开关：把"没交付"的这段音频存下来。事后听一遍就能分清
+        # 是"真没台词"、"被 VAD 滤掉"、还是"被跳过" —— 否则三者表现完全一样。
+        if os.environ.get("WATCH_ALONG_DUMP_GAPS"):
+            try:
+                import wave
+                d = os.path.join(os.path.dirname(DUMP), "gaps")
+                os.makedirs(d, exist_ok=True)
+                seg = audio[max(0, int((ACC["emitted_until"] - start_abs) * RATE)):]
+                path = os.path.join(d, f"gap_{int(ACC['emitted_until'])}_{int(end_abs)}.wav")
+                with wave.open(path, "wb") as w:
+                    w.setnchannels(1)
+                    w.setsampwidth(2)
+                    w.setframerate(RATE)
+                    w.writeframes((np.clip(seg, -1, 1) * 32767).astype(np.int16).tobytes())
+                print(f"[asr] 空档已存：{path}", flush=True)
+            except Exception:
+                pass
         ACC["emitted_until"] = end_abs - MARGIN_SEC
 
     # 裁剪缓冲：只前移 base（cursor 是绝对时间，不用动）
