@@ -10,6 +10,8 @@ import { encode } from './src/png.mjs'
 import { createPipeline } from './vendor/dsh-see-now-main/src/pipeline.js'
 import { createSubtitleReader } from './src/ocr.mjs'
 import { createSpeechReader } from './src/speech.mjs'
+import { createMobileServer } from './src/http.mjs'
+import crypto from 'node:crypto'
 import { defineToolCompat } from './vendor/dsh-see-now-main/src/define-tool.js'
 import http from 'node:http'
 import os from 'node:os'
@@ -91,7 +93,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url))
 export const name = 'dsh-watch-along'
 export const inject = ['tools']
 
-export function apply(ctx) {
+export function apply(ctx, opts = {}) {
   const log = (m) => {
     try {
       (ctx.logger?.info ?? ctx.logger?.log ?? (() => {}))(`[watch-along] ${m}`)
@@ -178,7 +180,24 @@ export function apply(ctx) {
 
   trace(`apply 完成：注册 ${tools.length} 个工具（${tools.map((t) => t.name).join(',')}）`)
 
+  // 手机端（只读）。启动失败不能影响工具注册 —— 端口被占是常事。
+  let mobile = null
+  // 预检脚本传 {mobile:false}：否则监听中的 server 会让进程不退出，把 check 挂死。
+  if (opts.mobile === false) {
+    log('手机端：本次跳过（预检模式）')
+  } else try {
+    const token = process.env.WATCH_ALONG_TOKEN || crypto.randomBytes(9).toString('base64url')
+    mobile = createMobileServer({ service, token, port: Number(process.env.WATCH_ALONG_PORT || 8770) })
+    mobile
+      .listen()
+      .then((i) => log(`手机端就绪：${i.url}/api/events?token=${i.token}`))
+      .catch((e) => log(`手机端没起来（不影响陪看）：${e?.message ?? e}`))
+  } catch (e) {
+    log(`手机端初始化失败（不影响陪看）：${e?.message ?? e}`)
+  }
+
   ctx.on?.('dispose', () => {
+    void mobile?.close?.()
     for (const d of disposers.reverse()) {
       try {
         d?.()

@@ -9,7 +9,7 @@ const ctx = {
   logger: { info: () => {} },
 }
 
-apply(ctx)
+apply(ctx, { mobile: false })
 console.log(JSON.stringify({ registered: regs.length, names: regs.map((r) => r.name) }))
 
 const windows = regs.find((r) => r.name === 'watch_windows')
