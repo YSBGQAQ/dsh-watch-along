@@ -54,6 +54,7 @@ export function createWatchService({
   startCapture,
   encode, // (frame:{width,height,rgb}) => Buffer
   createPipeline = null, // () => { push, take, flushNow, drainChanges }
+  subtitle = null, // { feed({buf,width,height}) } —— 字幕通道，缺省不启
   queue = null,
   spikeThreshold = 0,
   size = DEFAULT_SIZE,
@@ -160,6 +161,11 @@ export function createWatchService({
           // 变化摘要在「图被截走」和「图还在队列里等下一张」两种情况下都会产生。
           // 必须先读再 take()：没出图的那一帧攒下的摘要，会在下一次出图时被
           // take() + 后面的摘要一起挤掉，事件流就等于被本帧的 tick 节奏吃光（实测 30 秒 0 条）。
+          // 字幕通道自己节流（默认 1.5 秒一次），这里每帧都喂，由它决定跑不跑。
+          if (subtitle) {
+            subtitle.feed({ buf, width: dim.width, height: dim.height }).catch(() => {})
+          }
+
           const changeList = pipe.drainChanges?.() ?? []
           const sheet = pipe.take?.() ?? null
           const sheetId = Array.isArray(sheet) ? (sheet[0]?.id ?? null) : (sheet?.id ?? null)
@@ -243,5 +249,10 @@ export function createWatchService({
     return latestSheet
   }
 
-  return { start, stop, frame, rawFrame, sheet, status, events }
+  /** 给外部通道（字幕/声音）往同一条队列里投事件。 */
+  function emit(kind, payload) {
+    return eventQueue.add(kind, payload)
+  }
+
+  return { start, stop, frame, rawFrame, sheet, status, events, emit }
 }

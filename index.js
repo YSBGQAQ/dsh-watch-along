@@ -8,6 +8,49 @@ import { listWindows, lookupWindow } from './src/windows.mjs'
 import { startCapture } from './src/capture.mjs'
 import { encode } from './src/png.mjs'
 import { createPipeline } from './vendor/dsh-see-now-main/src/pipeline.js'
+import { createSubtitleReader } from './src/ocr.mjs'
+import http from 'node:http'
+import os from 'node:os'
+
+const OCR_PORT = 8765
+
+/**
+ * 把裁好的 PNG 交给常驻 OCR 服务。
+ * 走文件而不是直接传二进制：服务端是 rapidocr，它要的是路径，省一次 base64。
+ */
+function recognize(png) {
+  const file = path.join(os.tmpdir(), `watch-along-ocr-${Date.now()}.png`)
+  fs.writeFileSync(file, png)
+  const body = JSON.stringify({ path: file })
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      {
+        host: '127.0.0.1',
+        port: OCR_PORT,
+        path: '/ocr',
+        method: 'POST',
+        timeout: 6000,
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+      },
+      (res) => {
+        let data = ''
+        res.on('data', (c) => { data += c })
+        res.on('end', () => {
+          try {
+            const j = JSON.parse(data)
+            if (!j.ok) return reject(new Error(j.error || 'OCR 失败'))
+            resolve((j.lines || []).map((l) => l.t))
+          } catch (e) {
+            reject(e)
+          }
+        })
+      },
+    )
+    req.on('error', (e) => reject(new Error(`OCR 服务没响应（127.0.0.1:${OCR_PORT}）：${e.code || e.message}`)))
+    req.on('timeout', () => req.destroy(new Error('OCR 超时')))
+    req.end(body)
+  })
+}
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -37,11 +80,24 @@ export function apply(ctx) {
     }
   }
 
+  // 字幕通道：两次一致才收录。onEvent 走 service.emit，和画面共用一条队列。
+  let svcRef = null
+  const subtitle = createSubtitleReader({
+    encode,
+    recognize,
+    onEvent: (e) => {
+      if (e?.error) return log(`字幕通道：${e.error}`)
+      svcRef?.emit('ocr', e)
+      log(`字幕：${e.text}`)
+    },
+  })
+
   const service = createWatchService({
     listWindows,
     lookupWindow,
     startCapture,
     encode,
+    subtitle,
     // 判据、档位、拼图全部来自参考库；打开 changeLog 才有"每张图一条变化摘要"可读。
     createPipeline: () =>
       createPipeline({ width: 798, height: 450, fps: 8, changeLog: true, changeLogMax: 500 }),
@@ -61,6 +117,7 @@ export function apply(ctx) {
   })
 
   const disposers = []
+  svcRef = service
   for (const tool of tools) {
     disposers.push(ctx.tools.register(tool))
     log(`已注册工具 ${tool.name}`)
