@@ -99,7 +99,9 @@ export function createSubtitleReader({
         const rgb = Buffer.alloc(width * h * 3)
         buf.copy(rgb, 0, y0 * width * 3, y1 * width * 3)
         // 放大只为"字太小读不出"：带宽够大时照抄 scale 纯属浪费像素
-        const sc = width >= 1200 ? 1 : (band.scale ?? 1)
+        // 阈值可调：小窗口才放大；OCR_UPSCALE_BELOW 用来强制走放大路径做验证
+        const below = Number(process.env.OCR_UPSCALE_BELOW || 1200)
+        const sc = width >= below ? 1 : (band.scale ?? 1)
         const got = (await recognize(encode(sc === 1 ? { width, height: h, rgb } : upscale({ width, height: h, rgb, k: sc })))) ?? []
         const joined = got.map((x) => String(x).trim()).filter(Boolean).join(' ').trim()
         const text = joined.length > maxChars ? `${joined.slice(0, maxChars - 1)}…` : joined
