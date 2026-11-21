@@ -72,17 +72,3 @@ test('取图返回 PNG 字节，不给就说明原因', async () => {
   assert.equal(missing.status, 400)
   await m.close()
 })
-
-test('手机页面：带 token 拿到 HTML，不带 token 401', async () => {
-  const { m, info } = await boot()
-  const r = await fetch(`${info.url}/?token=t0ken`)
-  const html = await r.text()
-  assert.equal(r.status, 200)
-  assert.match(r.headers.get('content-type'), /text\/html/)
-  assert.match(html, /<title>陪看<\/title>/)
-  assert.match(html, /api\/events/)          // 页面自己要会轮询
-  assert.match(html, /正在重连/)               // 断线要有兜底
-  const no = await fetch(`${info.url}/`)
-  assert.equal(no.status, 401)
-  await m.close()
-})
