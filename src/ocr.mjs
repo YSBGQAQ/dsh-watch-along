@@ -212,6 +212,8 @@ export function createSubtitleReader({
           const line = String(raw).trim()
           if (line.length < minChars) { onDrop?.('too-short', line, label); continue }
           if (isNoise(line)) { onDrop?.('noise-format', line, label); continue }
+          // 噪音识别：不含 ≥2 个汉字的行几乎都是水印/清晰度/碎片（实测 1090P / II / HE / 7π）
+          if ((line.match(/[\u4e00-\u9fff]/g) ?? []).length < 2) { onDrop?.('few-cjk', line, label); continue }
           const key = `${label}|${line.replace(/[^\p{L}\p{N}]/gu, '')}`
           const st = seen.get(key) ?? { hits: 0, firstAt: at - Math.max(0, batchN ?? 1) * intervalMs, emitted: false }
           st.hits += 1
