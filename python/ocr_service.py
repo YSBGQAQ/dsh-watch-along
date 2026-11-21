@@ -10,7 +10,7 @@
 import json
 import sys
 import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from rapidocr import RapidOCR
 
@@ -83,5 +83,4 @@ if __name__ == "__main__":
         if "--port" in sys.argv:
             port = int(sys.argv[sys.argv.index("--port") + 1])
         ENGINE = load()
-        # 预跑一次，避免第一个真实请求承担初始化开销
-        HTTPServer(("127.0.0.1", port), Handler).serve_forever()
+        ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
