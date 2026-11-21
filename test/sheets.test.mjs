@@ -37,7 +37,8 @@ test('出图时事件带 sheetId，且能按 id 原样取回（cached）', async
   await sleep(40)
 
   const ev = (await svc.events({ sinceId: 0 })).events[0]
-  assert.match(String(ev.sheetId), /^sheet-\d+$/, '事件必须带 sheetId')
+  assert.ok(String(ev.sheetId).length >= 10, 'sheetId 必须是随机串，不能是序号')
+  assert.doesNotMatch(String(ev.sheetId), /^sheet-\d+$/, '不能再用递增序号（可被遍历）')
 
   const shot = await svc.frame({ sheetId: ev.sheetId })
   assert.equal(shot.cached, true)
@@ -60,5 +61,18 @@ test('取不存在的拼图会明确报错，不是静默给张新图', async ()
   const svc = svcWith()
   await svc.start({ window: '直播' })
   await assert.rejects(() => svc.frame({ sheetId: 'sheet-999' }), /没有这张拼图/)
+  await svc.stop()
+})
+
+test('拼图会过期：超过 TTL 后取回明确报错', async () => {
+  // TTL 在创建服务时从环境变量读，所以先设再建 —— 比等 10 分钟快
+  process.env.WATCH_ALONG_SHEET_TTL_MS = '50'
+  const svc = svcWith()
+  await svc.start({ window: '直播' })
+  await sleep(40)
+  const ev = (await svc.events({ sinceId: 0 })).events[0]
+  await sleep(120) // 越过 50ms 的 TTL
+  await assert.rejects(() => svc.frame({ sheetId: ev.sheetId }), /已过期/)
+  delete process.env.WATCH_ALONG_SHEET_TTL_MS
   await svc.stop()
 })

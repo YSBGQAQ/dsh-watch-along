@@ -3,6 +3,7 @@
 // 工具（给 AI）与 HTTP（给手机）都只是它的薄适配器；测试也只打这里。
 // 屏幕、窗口、时间、PNG 编码、pipeline 全是注入的 —— 所以测试不需要真屏幕，也不加载 koffi。
 import { createEventQueue } from './events.mjs'
+import { randomBytes } from 'node:crypto'
 
 const DEFAULT_SIZE = { width: 798, height: 450 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -81,6 +82,8 @@ export function createWatchService({
   const sheetStore = new Map()
   let sheetSeq = 0
   const SHEET_KEEP = 20
+  // 图不是永久凭证：id 随机（防遍历）、默认 10 分钟过期（防转发后一直可用）。
+  const SHEET_TTL_MS = Number(process.env.WATCH_ALONG_SHEET_TTL_MS || 600_000)
 
   function status() {
     return {
@@ -179,9 +182,13 @@ export function createWatchService({
           let sheetId = null
           if (sheet?.png) {
             sheetSeq += 1
-            sheetId = `sheet-${sheetSeq}`
+            sheetId = randomBytes(9).toString('base64url')
             sheetStore.set(sheetId, {
-              png: sheet.png, width: sheet.w ?? size.width, height: sheet.h ?? size.height, t: sheet.at,
+              png: sheet.png,
+              width: sheet.w ?? size.width,
+              height: sheet.h ?? size.height,
+              t: sheet.at,
+              expiresAt: now() + SHEET_TTL_MS,
             })
             while (sheetStore.size > SHEET_KEEP) sheetStore.delete(sheetStore.keys().next().value)
             latestSheet = { ...sheet, id: sheetId }
@@ -220,7 +227,11 @@ export function createWatchService({
     if (sheetId) {
       const hit = sheetStore.get(sheetId)
       if (!hit) throw new Error(`没有这张拼图：${sheetId}（只留最近 ${SHEET_KEEP} 张）`)
-      return { ...hit, cached: true }
+      if (Number.isFinite(hit.expiresAt) && now() > hit.expiresAt) {
+        sheetStore.delete(sheetId)
+        throw new Error(`这张拼图已过期：${sheetId}（默认 ${Math.round(SHEET_TTL_MS / 60000)} 分钟内有效）`)
+      }
+      return { ...hit, cached: true, expiresAt: hit.expiresAt }
     }
     if (!capture) throw new Error('还没开始采集：先调用 watch_start')
 
