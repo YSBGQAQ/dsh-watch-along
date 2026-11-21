@@ -78,8 +78,15 @@ function sample() {
 const sampler = setInterval(sample, 60_000)
 sample()
 
+let interrupted = false
+process.on('SIGINT', () => {
+  if (interrupted) process.exit(130) // 连按两次直接退
+  interrupted = true
+  say('[interrupt] 收到 Ctrl+C，正在出 summary（再按一次强制退出）')
+})
+
 let lastReport = Date.now()
-while (Date.now() < deadline) {
+while (Date.now() < deadline && !interrupted) {
   const got = await service.events({ sinceId: cursor, waitMs: 20_000 })
   if (got.timedOut) timeouts += 1
   for (const e of got.events) {
