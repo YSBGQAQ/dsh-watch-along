@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { loadSettings, saveSettings, DEFAULTS, PRESETS } from '../src/settings.mjs'
+import { loadSettings, saveSettings, validate, DEFAULTS, PRESETS } from '../src/settings.mjs'
 
 const tmp = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wa-set-')), 'watch-along.json')
 
@@ -40,4 +40,13 @@ test('文件是坏 JSON 时回默认值，并说明是坏的', () => {
   assert.equal(r.source, 'broken')
   assert.match(r.error, /JSON|Unexpected/i)
   assert.equal(r.value.preset, DEFAULTS.preset)
+})
+
+test('监听地址可调，非法的拒掉', () => {
+  const ok = validate({ host: '127.0.0.1' })
+  assert.equal(ok.ok, true)
+  assert.equal(ok.value.host, '127.0.0.1')
+  const bad = validate({ host: '8.8.8.8' })
+  assert.equal(bad.ok, false)
+  assert.equal(bad.rejected[0].field, 'host')
 })

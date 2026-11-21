@@ -12,6 +12,7 @@ export const DEFAULTS = Object.freeze({
   subtitle: true,
   speech: true,
   speechPerMin: 6,
+  host: '0.0.0.0', // 手机端监听地址：0.0.0.0 = 局域网可连，127.0.0.1 = 只本机
   // 高级（折叠）：裸阈值，正常不该改
   region: { top: 0, height: 1 },
   maxWaitSec: 15,
@@ -58,6 +59,10 @@ export function validate(patch, current = DEFAULTS) {
       case 'speech':
         if (typeof raw !== 'boolean') reject(key, '必须是 true / false')
         else value[key] = raw
+        break
+      case 'host':
+        if (!['0.0.0.0', '127.0.0.1', 'localhost'].includes(raw)) reject(key, '只能是 0.0.0.0 / 127.0.0.1')
+        else value.host = raw
         break
       case 'fps':
         if (!Number.isInteger(raw) || raw < 1 || raw > 30) reject(key, '必须是 1–30 的整数')

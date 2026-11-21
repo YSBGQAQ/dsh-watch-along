@@ -82,6 +82,13 @@ function recognize(png) {
     req.on('error', (e) => reject(new Error(`OCR 服务没响应（127.0.0.1:${OCR_PORT}）：${e.code || e.message}`)))
     req.on('timeout', () => req.destroy(new Error('OCR 超时')))
     req.end(body)
+  }).finally(() => {
+    // 用完即删：这些都是屏幕截图，攒在 %TEMP% 里既占地方也留隐私痕迹
+    try {
+      fs.unlinkSync(file)
+    } catch {
+      /* 删不掉不影响主流程 */
+    }
   })
 }
 import fs from 'node:fs'
@@ -135,6 +142,19 @@ export function apply(ctx, opts = {}) {
     },
   })
 
+  // 启动时清一次历史残留（之前版本的实现把临时图留在了 %TEMP%）
+  try {
+    const tmp = os.tmpdir()
+    const cutoff = Date.now() - 3600_000
+    for (const name of fs.readdirSync(tmp)) {
+      if (!name.startsWith('watch-along-ocr-') || !name.endsWith('.png')) continue
+      const f = path.join(tmp, name)
+      if (fs.statSync(f).mtimeMs < cutoff) fs.unlinkSync(f)
+    }
+  } catch {
+    /* 清理失败不该阻止插件启动 */
+  }
+
   const service = createWatchService({
     listWindows,
     lookupWindow,
@@ -187,7 +207,12 @@ export function apply(ctx, opts = {}) {
     log('手机端：本次跳过（预检模式）')
   } else try {
     const token = process.env.WATCH_ALONG_TOKEN || crypto.randomBytes(9).toString('base64url')
-    mobile = createMobileServer({ service, token, port: Number(process.env.WATCH_ALONG_PORT || 8770) })
+    mobile = createMobileServer({
+      service,
+      token,
+      port: Number(process.env.WATCH_ALONG_PORT || 8770),
+      host: process.env.WATCH_ALONG_HOST || '0.0.0.0', // 默认局域网可连；设置界面可改回 127.0.0.1
+    })
     mobile
       .listen()
       .then((i) => log(`手机端就绪：${i.url}/api/events?token=${i.token}`))
