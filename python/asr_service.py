@@ -19,10 +19,32 @@ MODEL_DIR = r"C:\Users\24206\Desktop\源码与作者说明\Whisper turbo"
 MODEL = None
 
 
+def _register_cuda_dlls():
+    """把 nvidia-* wheel 里的 DLL 目录挂进搜索路径。
+
+    不挂的话，ctranslate2 能加载权重、却在第一次 encode 时抛
+    `Library cublas64_12.dll is not found or cannot be loaded`——
+    模型"加载成功"但一用就炸，最容易被误判成显存问题。
+    """
+    import os
+    import site
+
+    for base in site.getsitepackages():
+        for sub in ("cublas/bin", "cudnn/bin", "cuda_nvrtc/bin"):
+            p = os.path.join(base, "nvidia", *sub.split("/"))
+            if os.path.isdir(p):
+                try:
+                    os.add_dll_directory(p)
+                except OSError:
+                    pass
+                os.environ["PATH"] = p + os.pathsep + os.environ.get("PATH", "")
+
+
 def load():
     global MODEL
     if MODEL is not None:
         return MODEL
+    _register_cuda_dlls()
     from faster_whisper import WhisperModel
 
     t0 = time.time()
