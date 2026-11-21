@@ -123,3 +123,28 @@ dsh-watch-along: pending (waiting for service: @deepseek-ai/dsh-client-ui-slots)
 - 若变成 `waiting for service: @deepseek-ai/dsh-client-locale`，说明 locale 缺，继续补
 - 若消失但仍无面板，说明服务齐了但槽位名不对（去查 basics-panel 里 `"nav"` 的用法）
 - 若报别的错，按报错原文查
+
+## 结论（2026-11-21 09:46）：卡在未公开的客户端服务契约上，暂时撤下
+
+**两次重启，控制台一字不变：**
+
+```
+web boot: warning: 1 entry did not activate
+dsh-watch-along: pending (waiting for service: @deepseek-ai/dsh-client-ui-slots)
+```
+
+- 补齐 `locale` 后无变化 → 不是注入清单缺项
+- `client.js` 已被加载器读到（否则不会有这条 pending）
+- 报错明确指向 **服务本身没提供**，不是我们调用方式错
+
+**已做**：从 `package.json` 撤掉 `dsh.client`，控制台恢复干净；`client.js` 保留在仓库里
+（代码是对的，差的是宿主没有这个服务）。
+
+**下次要查的三件事**
+1. 本机这个 DSH 构建里，`@deepseek-ai/dsh-client-ui-slots` 到底叫什么（去 `app.asar` 或
+   `dsh-client-*` 包的 manifest 里找服务名）
+2. 有没有别的面板类插件真在本机跑起来过（拿它的声明做对照）
+3. 是否必须通过官方的插件脚手架打包，手写的 `__ModuleLoader__` 形态不被接受
+
+**在此之前，设置界面这条路是堵的** —— 但插件的功能一件没少：
+工具、三条通道、手机端接口全部可用，只是没有图形设置入口。
