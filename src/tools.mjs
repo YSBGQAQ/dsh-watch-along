@@ -112,6 +112,12 @@ export function createTools({ service, listWindows, attachments = null, outDir =
 
   // 宿主的 defineTool 要求每个工具都带 output.render（缺了会被静默丢弃，
   // 表现是"注册成功但工具列表里没有"）。统一给一个 JSON 渲染。
-  const OUT = { render: (r) => (typeof r === 'string' ? r : JSON.stringify(r)) }
+  // render(args, value) 必须返回内容块数组 —— 宿主会对它调 content.some()。
+  // 返回字符串会报 `content.some is not a function`（实测）。
+  const OUT = {
+    render: (_args, value) => [
+      { type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value) },
+    ],
+  }
   return list.map((t) => ({ ...t, output: OUT }))
 }
