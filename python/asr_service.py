@@ -9,6 +9,8 @@
 """
 import ctypes
 import json
+import os
+import time
 from difflib import SequenceMatcher
 import sys
 import time
@@ -167,6 +169,7 @@ def listen(seconds=3.0):
         if _is_dup(key):
             continue  # 文本重复：同一句换了个说法
         done.append({"text": line["text"], "t0": round(t0, 2), "t1": round(t1, 2)})
+        _dump(line["text"], round(t0, 2), round(t1, 2))
         STATE["seen"].append(key)
         if len(STATE["seen"]) > SEEN_MAX:
             STATE["seen"] = STATE["seen"][-SEEN_MAX:]
@@ -181,6 +184,22 @@ def listen(seconds=3.0):
         total = KEEP_SEC
 
     return {"lines": done, "ms": res["ms"], "silent": False, "rms": round(rms, 5), "total": round(total, 2)}
+
+
+DUMP = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".scratch", "run", "asr-out.jsonl")
+
+
+def _dump(line, t0, t1):
+    """把交付的每一行落到 jsonl，供事后和字幕文件对照。
+
+    只有"绝对时间"才有对照价值 —— 所以记的是从本次会话开始算的秒数。
+    """
+    try:
+        os.makedirs(os.path.dirname(DUMP), exist_ok=True)
+        with open(DUMP, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"t0": t0, "t1": t1, "text": line}, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
 
 
 def reset():
