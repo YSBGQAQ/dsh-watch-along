@@ -7,6 +7,7 @@
 为什么要常驻：Whisper 加载 1.6GB 权重约 3–6 秒，而一句话的转写只要几百毫秒。
 每次起进程的话，时间全花在加载上（同 ADR 0003 的理由）。
 """
+import ctypes
 import json
 import sys
 import time
@@ -61,6 +62,10 @@ def load():
 
 def record(seconds=5.0, rate=16000):
     """录系统输出（环回）。没有环回设备时抛错，让上层如实报告。"""
+    # WASAPI 走 COM，而 COM 是**按线程**初始化的：ThreadingHTTPServer 每个请求
+    # 都在新线程里，不在这里 CoInitialize 就会报 `Error 0x800401f0`
+    # （CO_E_NOTINITIALIZED，字面意思是"没调过 CoInitialize"）。
+    ctypes.windll.ole32.CoInitialize(None)
     import soundcard as sc
 
     spk = sc.default_speaker()
