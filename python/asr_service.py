@@ -166,6 +166,38 @@ def _is_dup(key):
     return False
 
 
+# Whisper 在静音/音乐段的经典幻觉：字幕组署名、礼貌结尾、重复叹词。
+# 词表照 better-ears 的思路（中英各取常见项），命中即丢。
+HALLUCINATION_PATTERNS = [
+    "谢谢观看", "感谢观看", "谢谢收看", "请订阅", "订阅频道", "点赞", "关注我",
+    "中文字幕", "字幕由", "字幕组", "翻译", "校对", "制作",
+    "请不吝点赞", "明镜与点点", "amara.org", "subtitle", "subtitles by",
+    "thanks for watching", "please subscribe", "like and subscribe",
+    "嗯嗯", "啊啊", "哈哈",
+]
+
+
+def _looks_hallucinated(text):
+    """事后防幻觉。返回 True = 这条不该发。
+
+    三条判据，任一命中即丢：
+    1. 命中常见幻觉词（字幕组署名、礼貌结尾）
+    2. 太短且无信息量（单字、纯符号）
+    3. 同一字符占比过高（"啊啊啊啊"）
+    """
+    t = str(text).strip()
+    low = t.lower()
+    for p in HALLUCINATION_PATTERNS:
+        if p in low:
+            return True
+    core = _norm(t)
+    if len(core) < 2:
+        return True
+    if len(core) >= 4 and len(set(core)) / len(core) < 0.34:
+        return True
+    return False
+
+
 def _dump(text, t0, t1):
     """把交付的每一行落到 jsonl，供事后和字幕文件对照（绝对时间才有对照价值）。"""
     try:
@@ -220,7 +252,7 @@ def pull():
         if t1 <= ACC["emitted_until"] + 0.05:
             continue  # 已经交付过（时间水位是绝对的）
         key = _norm(line["text"])
-        if not key or _is_dup(key):
+        if not key or _looks_hallucinated(line["text"]) or _is_dup(key):
             continue
         done.append({"text": line["text"], "t0": round(t0, 2), "t1": round(t1, 2)})
         _dump(line["text"], round(t0, 2), round(t1, 2))
