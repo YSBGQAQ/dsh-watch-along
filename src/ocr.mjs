@@ -59,7 +59,17 @@ const NOISE_RES = [
   /^[\d\s.,:：;；|/\\-]+$/,
 ]
 /** 水印/播放器署名：短、稳定、永远是噪音（我们场景特有，streamvision 那边没有） */
-const WATERMARK = [/bilibili/i, /Ai看剧/i, /正在看/, /未删减/, /^哔哩哔哩/]
+// OCR 会把水印认歪（实测 "bilibili"→"LiliLili"、"Ai看剧"→"Ai石剧"），
+// 所以按"特征"而不是精确串匹配。
+const WATERMARK = [
+  /[Ll]ili/i,
+  /Ai.?.?剧/,
+  /小伙柴/,
+  /正在看/,
+  /未删减/,
+  /^哔哩?哩?哔?哩?$/,
+  /^[A-Za-z]{2,10}$/, // 纯拉丁短串基本是播放器水印/标签
+]
 
 function isNoise(line) {
   const t = line.trim()
