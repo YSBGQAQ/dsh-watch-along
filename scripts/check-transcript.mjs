@@ -39,13 +39,58 @@ if (!fs.existsSync(ASR)) {
 }
 const ours = fs.readFileSync(ASR, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l))
 
+// 自动找时间偏移：我们的时间从"服务启动"算，字幕从"视频开始"算，两者差多少不知道。
+// 扫一遍偏移，取覆盖率最高的那个 —— 否则覆盖率会被这个平移压成个位数（实测 2%）。
+function score(offset) {
+  let hit = 0
+  let sim = 0
+  for (const g of gt) {
+    let best = 0
+    for (const o of ours) {
+      const o0 = o.t0 + offset
+      const o1 = o.t1 + offset
+      if (o1 < g.t0 - 1 || o0 > g.t1 + 1) continue
+      const r = ratio(g.key, norm(o.text))
+      if (r > best) best = r
+    }
+    if (best >= 0.5) { hit += 1; sim += best }
+  }
+  return { hit, sim }
+}
+
+let bestOffset = 0
+let bestHit = -1
+for (let off = -600; off <= 600; off += 5) {
+  const { hit } = score(off)
+  if (hit > bestHit) { bestHit = hit; bestOffset = off }
+}
+const offset = bestOffset
+if (process.env.SHOW_OFFSET) console.error('最佳偏移', offset, '秒')
+
+// 只按文本算的覆盖率：不管时间。
+// 为什么需要它：字幕是一句一条，我们经常一条含几句（"看见什么了 快说呀"），
+// 严格按"一条对一条"会把明明听到了的判成漏（实测 5.4% vs 实际大量命中）。
+function textHit(g) {
+  let best = 0
+  for (const o of ours) {
+    const r = ratio(g.key, norm(o.text))
+    if (r > best) best = r
+    if (best >= 0.8) break
+  }
+  return best
+}
+let textHits = 0
+for (const g of gt) if (textHit(g) >= 0.6) textHits += 1
+
 let hit = 0, simSum = 0
 const missed = []
 for (const g of gt) {
   // 找时间上重叠的我们的行，取相似度最高的
   let best = 0
   for (const o of ours) {
-    if (o.t1 < g.t0 - 1 || o.t0 > g.t1 + 1) continue
+    const o0 = o.t0 + offset
+    const o1 = o.t1 + offset
+    if (o1 < g.t0 - 1 || o0 > g.t1 + 1) continue
     const r = ratio(g.key, norm(o.text))
     if (r > best) best = r
   }
@@ -61,9 +106,11 @@ const dups = [...dupText.entries()].filter(([, n]) => n > 1)
 
 console.log(JSON.stringify({
   区间: `${from}s – ${to}s`,
+  最佳偏移秒: offset,
   字幕条数: gt.length,
   我们条数: ours.length,
-  覆盖率: gt.length ? `${((hit / gt.length) * 100).toFixed(1)}%` : '-',
+  覆盖率_时间对齐: gt.length ? `${((hit / gt.length) * 100).toFixed(1)}%` : '-',
+  覆盖率_仅文本: gt.length ? `${((textHits / gt.length) * 100).toFixed(1)}%` : '-',
   命中平均相似度: hit ? (simSum / hit).toFixed(3) : '-',
   重复句: dups.length,
   漏掉的例子: missed,
