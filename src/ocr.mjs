@@ -158,6 +158,30 @@ export function createSubtitleReader({
   let round = 0
   const pendingBands = new Map() // label -> 待拼的图（batch>1 时攒够再送）
   const seen = new Map() // key -> { hits, firstAt, emitted }
+  // 拼图里同一句字幕常被认成细微不同的文本（差一个字），各出现 1 次 → 永远凑不齐两拍。
+  // 所以找 key 时先做相似度归并（≥0.85 视为同一句），这是 streamvision 的做法。
+  const normText = (t) => t.replace(/[^\p{L}\p{N}]/gu, '')
+  const bigrams = (s) => {
+    const m = new Map()
+    for (let i = 0; i < s.length - 1; i += 1) m.set(s.slice(i, i + 2), (m.get(s.slice(i, i + 2)) ?? 0) + 1)
+    return m
+  }
+  const sim = (a, b) => {
+    if (!a || !b) return 0
+    if (a === b) return 1
+    const ga = bigrams(a)
+    const gb = bigrams(b)
+    let inter = 0
+    let uni = 0
+    for (const [g, n] of ga) {
+      const m = gb.get(g) ?? 0
+      inter += Math.min(n, m)
+      uni += Math.max(n, m)
+    }
+    for (const [g, n] of gb) if (!ga.has(g)) uni += n
+    return uni ? inter / uni : 0
+  }
+  const alias = new Map() // label -> [{ key, norm }]
   // 会话内重复计数：不判断"这是什么"，只看"它是不是在不停重复"。
   // 水印必然重复，台词很少重复到阈值；阈值可调，默认 5。
   const MUTE_AFTER = Number(process.env.WATCH_ALONG_MUTE_AFTER || 3)
@@ -214,8 +238,22 @@ export function createSubtitleReader({
           if (isNoise(line)) { onDrop?.('noise-format', line, label); continue }
           // 噪音识别：不含 ≥2 个汉字的行几乎都是水印/清晰度/碎片（实测 1090P / II / HE / 7π）
           if ((line.match(/[\u4e00-\u9fff]/g) ?? []).length < 2) { onDrop?.('few-cjk', line, label); continue }
-          const key = `${label}|${line.replace(/[^\p{L}\p{N}]/gu, '')}`
-          const st = seen.get(key) ?? { hits: 0, firstAt: at - Math.max(0, batchN ?? 1) * intervalMs, emitted: false }
+          const normLine = normText(line)
+          const list = alias.get(label) ?? []
+          // 先找相似度 ≥0.85 的已有 key，避免同一句被拆成多个变体
+          const near = list.find((e) => sim(e.norm, normLine) >= 0.85)
+          const key = near?.key ?? `${label}|${normLine}`
+          if (!near) {
+            list.push({ key, norm: normLine })
+            if (list.length > 120) list.shift()
+            alias.set(label, list)
+          }
+          let st = seen.get(key)
+          if (!st) {
+            st = { hits: 0, firstAt: at - Math.max(0, batchN ?? 1) * intervalMs, emitted: false }
+            // 归并到已有 key 时，代表这一句在更早的拍里已经出现过
+            if (near) st.firstAt = at - intervalMs
+          }
           st.hits += 1
           if (!st.emitted && st.hits >= 2 && at - st.firstAt >= stableMs) {
             st.emitted = true
