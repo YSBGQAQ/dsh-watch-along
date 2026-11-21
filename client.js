@@ -72,6 +72,10 @@ window.__ModuleLoader__.load({
     }
 
     function apply(ctx) {
+      if (!ctx?.slots?.inject) {
+        // 没有 slots 服务：面板不出现，但插件其余部分照常（工具在 index.js 里注册）
+        return
+      }
       ctx.slots.inject('settings.section', () =>
         ctx.slots.register(
           {
@@ -85,16 +89,10 @@ window.__ModuleLoader__.load({
         ))
     }
 
-    // 注入清单照抄本机跑得通的 dsh-purge-community（它用同一套 ui-slots）。
-    return {
-      apply,
-      inject: [
-        '@deepseek-ai/dsh-client-connection',
-        '@deepseek-ai/dsh-client-runtime',
-        '@deepseek-ai/dsh-client-locale',
-        '@deepseek-ai/dsh-client-ui-slots',
-        '@deepseek-ai/dsh-client-ui-settings',
-      ],
-    }
+    // 导出空 inject：宿主的判定是 `fiber.inject` 里每个服务都要 ctx.get() 拿得到，
+    // 拿不到就 pending（dsh-app-boot/src/index.ts:1093）。实测声明 5 个 → 5 个全 pending，
+    // 而跑得通的 dsh-jiuling 包声明就是 `inject: []`。服务大概率本来就在作用域里，
+    // 是我们把它标成硬依赖才卡住的。apply 里改成可选访问，拿不到就只少一个面板。
+    return { apply, inject: [] }
   },
 })
