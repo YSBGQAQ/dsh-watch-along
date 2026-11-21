@@ -6,7 +6,8 @@
   "description": "让 AI 陪你看网页直播：画面拼图 + 屏幕字幕 + 系统声音",
   "main": "./index.js",
   "exports": {
-    ".": "./index.js"
+    ".": "./index.js",
+    "./client": "./client.js"
   },
   "engines": {
     "node": ">=20"
@@ -14,6 +15,13 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-slots"
+      ]
     }
   },
   "scripts": {
