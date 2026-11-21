@@ -99,7 +99,9 @@ RATE = 16000
 # 连续累积的音频 + 已经交付过的句子（按时间码去重）。
 # 关键：每次都转**整个缓冲**，不截尾巴 —— 从句子中间开始转会丢上下文，
 # Whisper 会吐出"不分有"这种碎片（实测过，别改回去）。
-STATE = {"audio": np.zeros(0, dtype=np.float32), "seen": []}
+# `emitted_until`：已经交付到第几秒。**输入整段（保上下文），输出按时间过滤** ——
+# 这是关键区别：截输入会丢上下文（吐碎片），截输出只会挡住重复。
+STATE = {"audio": np.zeros(0, dtype=np.float32), "emitted_until": 0.0, "seen": []}
 KEEP_SEC = 20.0    # 留最近 20 秒：够给上下文，又不至于每次转太久
 MARGIN_SEC = 0.8   # 句尾离缓冲边缘太近的先不发，它可能还没说完
 SEEN_MAX = 200     # 记住最近 200 句的归一化文本
@@ -160,17 +162,22 @@ def listen(seconds=3.0):
         key = _norm(line["text"])
         if not key:
             continue
+        if t1 <= STATE["emitted_until"] + 0.05:
+            continue  # 这一段已经在之前交付过了（时间水位）
         if _is_dup(key):
-            continue  # 已经发过这一句（模糊判重，不看时间码）
+            continue  # 文本重复：同一句换了个说法
         done.append({"text": line["text"], "t0": round(t0, 2), "t1": round(t1, 2)})
         STATE["seen"].append(key)
         if len(STATE["seen"]) > SEEN_MAX:
             STATE["seen"] = STATE["seen"][-SEEN_MAX:]
+        STATE["emitted_until"] = max(STATE["emitted_until"], t1)
 
     # 裁剪缓冲。去重是按文本的，所以这里不用再平移时间码。
     if total > KEEP_SEC:
         drop = total - KEEP_SEC
         STATE["audio"] = buf[int(drop * RATE):]
+        # 水位跟着平移，否则下次比较全错（会重复交付整个缓冲区）
+        STATE["emitted_until"] = max(0.0, STATE["emitted_until"] - drop)
         total = KEEP_SEC
 
     return {"lines": done, "ms": res["ms"], "silent": False, "rms": round(rms, 5), "total": round(total, 2)}
@@ -178,7 +185,9 @@ def listen(seconds=3.0):
 
 def reset():
     global STATE
-    STATE = {"audio": np.zeros(0, dtype=np.float32), "seen": []}
+    # `emitted_until`：已经交付到第几秒。**输入整段（保上下文），输出按时间过滤** ——
+# 这是关键区别：截输入会丢上下文（吐碎片），截输出只会挡住重复。
+STATE = {"audio": np.zeros(0, dtype=np.float32), "emitted_until": 0.0, "seen": []}
 
 
 class Handler(BaseHTTPRequestHandler):
