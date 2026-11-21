@@ -197,6 +197,7 @@ export function startCapture({ region, width, height, fps = 8, onFrame, onClose 
   const outH = Math.max(1, Math.round(height || region2.height))
   const params = { region: region2, width: outW, height: outH, fps }
   const interval = Math.max(50, Math.round(1000 / fps))
+  const t0 = Date.now()
   let i = 0
   let stopped = false
   const timer = setInterval(() => {
@@ -209,7 +210,9 @@ export function startCapture({ region, width, height, fps = 8, onFrame, onClose 
       if (width && height && (width !== frame.width || height !== frame.height)) {
         frame = { ...scaleTo(frame, width, height) }
       }
-      onFrame?.({ i, t: Date.now(), ...frame })
+      // pipeline 内部按**秒**算帧间隔（`entry.t.toFixed(2)`、变化率），
+      // 传毫秒会让所有时间数学失真 —— 实测 motion 恒 0。第一帧为 0。
+      onFrame?.({ i, t: (Date.now() - t0) / 1000, ...frame })
     } catch (e) {
       // 抓不到不代表要停：窗口可能暂时最小化，下一拍继续
       onClose?.(`capture 失败：${e.message}`)
