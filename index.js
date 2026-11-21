@@ -131,6 +131,10 @@ export function apply(ctx, opts = {}) {
       svcRef?.emit('ocr', e)
       log(`字幕[${e.band}]：${e.text}`)
     },
+    onDrop: (reason, text, band) => {
+      // 丢弃也要留痕：否则"为什么这段没字幕"只能靠猜
+      log(`字幕丢弃[${band}/${reason}]：${String(text).slice(0, 40)}`)
+    },
   })
 
   const speech = createSpeechReader({

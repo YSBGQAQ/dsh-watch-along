@@ -83,6 +83,7 @@ export function createSubtitleReader({
   recognize,
   encode,
   onEvent,
+  onDrop, // (reason, text, band) —— 丢弃要留痕，否则'为什么少了'永远查不出
   intervalMs = 1500,
   stableMs = 1200, // 同一行要隔这么久仍被认到才发（streamvision 的 STABLE_MS）
   threshold = 0.85,
@@ -152,8 +153,8 @@ export function createSubtitleReader({
       for (const { label, lines } of results) {
         for (const raw of lines) {
           const line = String(raw).trim()
-          if (line.length < minChars) continue
-          if (isNoise(line)) continue
+          if (line.length < minChars) { onDrop?.('too-short', line, label); continue }
+          if (isNoise(line)) { onDrop?.('noise-format', line, label); continue }
           const key = `${label}|${line.replace(/[^\p{L}\p{N}]/gu, '')}`
           const st = seen.get(key) ?? { hits: 0, firstAt: at, emitted: false }
           st.hits += 1
@@ -164,15 +165,23 @@ export function createSubtitleReader({
             counts.set(nk, n)
             if (n > MUTE_AFTER && line.length <= 8 && !/[。？！，；、]/.test(line)) {
               muted.set(nk, n)
+              onDrop?.('muted-repeat', line, label)
               seen.set(key, st)
               continue
             }
-            if (muted.has(nk)) { seen.set(key, st); continue }
+            if (muted.has(nk)) { onDrop?.('muted-repeat', line, label); seen.set(key, st); continue }
             const ev = { band: label, text: line, hits: st.hits, similarity: 1 }
             events.push(ev)
             onEvent?.(ev)
           }
           seen.set(key, st)
+        }
+      }
+      // 只认到一次的行：过了 2 倍稳定窗就判定"凑不齐两拍"，报出来再清
+      for (const [k, v] of seen) {
+        if (!v.emitted && at - v.firstAt > stableMs * 2) {
+          onDrop?.('need-2-hits', k.split('|')[1] ?? k, k.split('|')[0])
+          seen.delete(k)
         }
       }
       // 清掉太久没出现的，避免长跑无限增长
