@@ -89,15 +89,58 @@ def transcribe(audio, rate=16000):
     return {"lines": lines, "ms": round((time.time() - t0) * 1000, 1), "lang": info.language}
 
 
-def listen(seconds=5.0):
-    audio = record(seconds)
-    rms = float(np.sqrt(np.mean(audio**2))) if len(audio) else 0.0
+RATE = 16000
+# 连续累积的音频与"已经发出去到哪儿"。不按固定窗口切，是为了不把一句话切两半。
+STATE = {"audio": np.zeros(0, dtype=np.float32), "emitted": 0.0}
+KEEP_SEC = 30.0     # 缓冲只留最近 30 秒，避免越攒越大
+MARGIN_SEC = 0.8    # 句尾离缓冲区边缘不到 0.8 秒的，先不发 —— 它可能还没说完
+
+
+def listen(seconds=3.0):
+    """录一小段、追加到缓冲，只返回"已经说完"的句子。
+
+    为什么不是每段独立转写：固定窗口会把一句话从中间切开，
+    转出来是"还从这里开始我会"这种碎片（实测）。改成从上次发出的位置重新转，
+    并且只交尾部留有 MARGIN_SEC 余量的句子 —— 这样切点永远落在句子之间。
+    """
+    global STATE
+    chunk = record(seconds)
+    if len(chunk):
+        STATE["audio"] = np.concatenate([STATE["audio"], chunk])
+    buf = STATE["audio"]
+    total = len(buf) / RATE
+    start = STATE["emitted"]
+
+    if total - start < 0.5:
+        return {"lines": [], "ms": 0, "silent": True, "rms": 0.0, "total": round(total, 2)}
+
+    tail = buf[int(start * RATE):]
+    rms = float(np.sqrt(np.mean(tail**2))) if len(tail) else 0.0
     if rms < 0.001:
-        return {"lines": [], "ms": 0, "silent": True, "rms": round(rms, 5)}
-    out = transcribe(audio)
-    out["silent"] = False
-    out["rms"] = round(rms, 5)
-    return out
+        return {"lines": [], "ms": 0, "silent": True, "rms": round(rms, 5), "total": round(total, 2)}
+
+    res = transcribe(tail)
+    done = []
+    for line in res["lines"]:
+        abs_t1 = start + line["t1"]
+        if abs_t1 > total - MARGIN_SEC:
+            continue  # 尾巴还没说完，等下一拍
+        done.append({"text": line["text"], "t0": round(start + line["t0"], 2), "t1": round(abs_t1, 2)})
+    if done:
+        STATE["emitted"] = done[-1]["t1"]
+
+    # 缓冲裁剪：留最近 KEEP_SEC 秒，同时把 emitted 基准一起平移
+    if total > KEEP_SEC:
+        drop = int((total - KEEP_SEC) * RATE)
+        STATE["audio"] = buf[drop:]
+        STATE["emitted"] = max(0.0, STATE["emitted"] - (total - KEEP_SEC))
+
+    return {"lines": done, "ms": res["ms"], "silent": False, "rms": round(rms, 5), "total": round(total, 2)}
+
+
+def reset():
+    global STATE
+    STATE = {"audio": np.zeros(0, dtype=np.float32), "emitted": 0.0}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -119,7 +162,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             n = int(self.headers.get("Content-Length") or 0)
             req = json.loads(self.rfile.read(n) or b"{}")
-            self._send({"ok": True, **listen(float(req.get("seconds", 5)))})
+            if req.get("reset"):
+                reset()
+            self._send({"ok": True, **listen(float(req.get("seconds", 3)))})
         except Exception as e:
             self._send({"ok": False, "error": f"{type(e).__name__}: {e}"}, 500)
 

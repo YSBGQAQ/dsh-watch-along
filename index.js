@@ -18,8 +18,11 @@ const OCR_PORT = 8765
 const ASR_PORT = 8766
 
 /** 问转写服务"刚才这几秒说了什么"。走文件没必要 —— 它只要秒数，不用图。 */
+let asrFirst = true
 function listen(seconds) {
-  const body = JSON.stringify({ seconds })
+  // 第一次请求顺带让服务清空缓冲：否则上一场陪看的尾巴会串到这一场来。
+  const body = JSON.stringify({ seconds, reset: asrFirst })
+  asrFirst = false
   return new Promise((resolve, reject) => {
     const req = http.request(
       { host: '127.0.0.1', port: ASR_PORT, path: '/listen', method: 'POST', timeout: 30000,
@@ -122,7 +125,7 @@ export function apply(ctx) {
 
   const speech = createSpeechReader({
     listen,
-    windowSec: 6,
+    windowSec: 3,
     onEvent: (e) => {
       if (e?.error) return log(`声音通道：${e.error}`)
       svcRef?.emit('speech', e)
