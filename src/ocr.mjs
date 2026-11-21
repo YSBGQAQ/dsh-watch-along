@@ -131,22 +131,26 @@ export function createSubtitleReader({
     busy = true
     try {
       const events = []
-      for (const band of bands) {
+      const at = now()
+      // 三带**并发**识别（streamvision 也是并发）：串行时一轮 = n×OCR，
+      // 周期被拉长，字幕存续期内凑不齐两拍 → 只出水印、不出台词。
+      const jobs = bands.map(async (band) => {
         const label = band.label ?? 'band'
         const y0 = Math.max(0, Math.floor(height * (band.top ?? 0)))
         const y1 = Math.min(height, Math.ceil(height * ((band.top ?? 0) + (band.height ?? 1))))
         const h = y1 - y0
-        if (h <= 0) continue
+        if (h <= 0) return { label, lines: [] }
         const rgb = Buffer.alloc(width * h * 3)
         buf.copy(rgb, 0, y0 * width * 3, y1 * width * 3)
-
-        // 放大只为"字太小读不出"：带宽够大时照抄 scale 纯属浪费像素
         const below = Number(process.env.OCR_UPSCALE_BELOW || 1200)
         const sc = width >= below ? 1 : (band.scale ?? 1)
         const got = (await recognize(encode(sc === 1 ? { width, height: h, rgb } : upscale({ width, height: h, rgb, k: sc })))) ?? []
+        return { label, lines: got }
+      })
+      const results = await Promise.all(jobs)
 
-        const at = now()
-        for (const raw of got) {
+      for (const { label, lines } of results) {
+        for (const raw of lines) {
           const line = String(raw).trim()
           if (line.length < minChars) continue
           if (isNoise(line)) continue
@@ -155,7 +159,6 @@ export function createSubtitleReader({
           st.hits += 1
           if (!st.emitted && st.hits >= 2 && at - st.firstAt >= stableMs) {
             st.emitted = true
-            // 短、无标点、反复出现 → 静音（仍计数，/status 可查）
             const nk = normKey(line)
             const n = (counts.get(nk) ?? 0) + 1
             counts.set(nk, n)
