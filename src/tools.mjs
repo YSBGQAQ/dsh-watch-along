@@ -57,9 +57,10 @@ export function createTools({ service, listWindows, attachments = null, outDir =
         '取一张当前画面（PNG 落盘并返回路径与尺寸）。想看细节时用；返回的是文件，不是像素。',
       parameters: {
         live: { type: 'boolean', description: 'true = 现在就抓一张（默认 true）' },
+        sheetId: { type: 'string', description: '取事件里带的那张拼图；给了就不重新抓屏' },
       },
       async execute(args = {}) {
-        const shot = await service.frame({ live: args.live !== false })
+        const shot = await service.frame({ live: args.live !== false, sheetId: args.sheetId ?? null })
         seq += 1
         const file = savePng(shot, seq, outDir)
         const { ref, via, attachmentError } = await deliver(shot.png, `watch-along-${seq}.png`)
@@ -67,7 +68,8 @@ export function createTools({ service, listWindows, attachments = null, outDir =
           width: shot.width,
           height: shot.height,
           t: shot.t,
-          at: shot.at,
+          at: shot.at ?? null,
+          cached: shot.cached === true,
           pngBytes: shot.png.length,
           file,
           ref,

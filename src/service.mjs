@@ -76,6 +76,10 @@ export function createWatchService({
   let reason = null
   let frames = 0
   let spikes = 0
+  // 拼图仓库：id → {png,width,height,t}。只留最近若干张，事件里只带 id，不带像素。
+  const sheetStore = new Map()
+  let sheetSeq = 0
+  const SHEET_KEEP = 20
 
   function status() {
     return {
@@ -168,9 +172,18 @@ export function createWatchService({
 
           const changeList = pipe.drainChanges?.() ?? []
           const sheet = pipe.take?.() ?? null
-          const sheetId = Array.isArray(sheet) ? (sheet[0]?.id ?? null) : (sheet?.id ?? null)
-          // 这一帧真的吐了图：留最近一张，取帧接口才不必等下一张
-          if (sheet?.png) latestSheet = sheet
+          // 这一帧真的吐了图：先入库，再把它挂到同一拍发出的事件上。
+          // pipeline 的 sheet 没有 id（`take()` 出来的对象里没有这个字段），自己发号。
+          let sheetId = null
+          if (sheet?.png) {
+            sheetSeq += 1
+            sheetId = `sheet-${sheetSeq}`
+            sheetStore.set(sheetId, {
+              png: sheet.png, width: sheet.w ?? size.width, height: sheet.h ?? size.height, t: sheet.at,
+            })
+            while (sheetStore.size > SHEET_KEEP) sheetStore.delete(sheetStore.keys().next().value)
+            latestSheet = { ...sheet, id: sheetId }
+          }
           for (const change of changeList) {
             // 兜底图（silentFloorSec 到点发的"我还在看"）不是变化事件。
             // 判据是 change.floor —— 它来自帧上的 `via === 'floor'`，
@@ -200,7 +213,12 @@ export function createWatchService({
    * `live: true` 会等一个「调用之后才到达」的帧 —— 否则拿到的可能是几百毫秒前的旧帧。
    * `live: false` 用手上最新的帧，立即返回。
    */
-  async function frame({ live = false, timeoutMs = 3000 } = {}) {
+  async function frame({ sheetId = null, live = false, timeoutMs = 3000 } = {}) {
+    if (sheetId) {
+      const hit = sheetStore.get(sheetId)
+      if (!hit) throw new Error(`没有这张拼图：${sheetId}（只留最近 ${SHEET_KEEP} 张）`)
+      return { ...hit, cached: true }
+    }
     if (!capture) throw new Error('还没开始采集：先调用 watch_start')
 
     const cutoff = now()
