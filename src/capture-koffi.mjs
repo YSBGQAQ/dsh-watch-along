@@ -150,11 +150,27 @@ export function capture({ x = 0, y = 0, width, height } = {}) {
   }
 }
 
+/** 最近邻缩放到指定尺寸（只为对齐 service 的 width/height 约定） */
+function scaleTo({ buf, width: sw, height: sh }, dw, dh) {
+  const out = Buffer.alloc(dw * dh * 3)
+  for (let y = 0; y < dh; y += 1) {
+    const sy = Math.min(sh - 1, Math.floor(((y + 0.5) * sh) / dh))
+    for (let x = 0; x < dw; x += 1) {
+      const s = (sy * sw + Math.min(sw - 1, Math.floor(((x + 0.5) * sw) / dw))) * 3
+      const d = (y * dw + x) * 3
+      out[d] = buf[s]
+      out[d + 1] = buf[s + 1]
+      out[d + 2] = buf[s + 2]
+    }
+  }
+  return { width: dw, height: dh, buf: out }
+}
+
 /**
  * 与旧 ffmpeg 采集同形的接口：按 fps 持续出帧 {i, t, buf}。
  * 调用方（service）不用改。
  */
-export function startCapture({ region, fps = 8, onFrame, onClose } = {}) {
+export function startCapture({ region, width, height, fps = 8, onFrame, onClose } = {}) {
   if (!region || typeof region !== 'object') throw new TypeError('startCapture 需要 region')
   // service 会读 capture.params.{fps,region,width,height}（旧 ffmpeg 采集器就有这段）。
   // 接口对齐是硬要求：少了它 watch_start 会死在 status() 上（实测报 reading 'fps'）。
@@ -176,7 +192,10 @@ export function startCapture({ region, fps = 8, onFrame, onClose } = {}) {
     width: Math.max(1, Math.min(phys.width, screen.width - phys.x)),
     height: Math.max(1, Math.min(phys.height, screen.height - phys.y)),
   }
-  const params = { region: region2, width: region2.width, height: region2.height, fps }
+  // params 报“输出尺寸”，与帧实际尺寸必须一致（service 按它切图、报 status）
+  const outW = Math.max(1, Math.round(width || region2.width))
+  const outH = Math.max(1, Math.round(height || region2.height))
+  const params = { region: region2, width: outW, height: outH, fps }
   const interval = Math.max(50, Math.round(1000 / fps))
   let i = 0
   let stopped = false
@@ -184,7 +203,12 @@ export function startCapture({ region, fps = 8, onFrame, onClose } = {}) {
     if (stopped) return
     i += 1
     try {
-      const frame = capture(region2)
+      let frame = capture(region2)
+      // service 会按传进来的 width/height 去切 buf；尺寸不一致就整条链路错位
+      // （实测 DSH 里 motion=0、ocr=0，只有 speech 正常）。按请求尺寸缩放输出。
+      if (width && height && (width !== frame.width || height !== frame.height)) {
+        frame = { ...scaleTo(frame, width, height) }
+      }
       onFrame?.({ i, t: Date.now(), ...frame })
     } catch (e) {
       // 抓不到不代表要停：窗口可能暂时最小化，下一拍继续
