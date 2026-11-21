@@ -305,13 +305,12 @@ export function createSubtitleReader({
               continue
             }
             if (muted.has(nk)) { onDrop?.('muted-repeat', line, label); seen.set(key, st); continue }
-            // t0/t1 成对，和 speech 事件、字幕文件同构；
-            // t1 = 该行最后一次被看到的时刻（等于 t0 表示只被采到一次）
+            // 只带 t0：一拍即发模型下发出去的瞬间还不知道会停留多久，
+            // 硬塞 t1 只会恒等于 t0（实测），反而误导（"停留 0 秒"）。
             const ev = {
               band: label,
               text: line,
               t0: Number((st.firstSeenReal ?? at / 1000).toFixed(2)),
-              t1: Number((at / 1000).toFixed(2)),
               hits: st.hits,
               similarity: 1,
             }
