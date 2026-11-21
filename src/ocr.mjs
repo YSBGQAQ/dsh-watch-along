@@ -136,7 +136,7 @@ export function createSubtitleReader({
     // 默认只跑字幕带：一次识别 ≈ 一次 OCR 的耗时，周期才压得下来。
     // mid（正文）每 4 轮一次即可，需要时把注释打开。
     // { top: 0.32, height: 0.4, label: 'mid', scale: 2, every: 4 },
-    { top: 0.66, height: 0.34, label: 'bottom', scale: 3, every: 1, batch: 5 },
+    { top: 0.66, height: 0.34, label: 'bottom', scale: 3, every: 1, batch: 3, once: true },
   ],
   // spec 要求 text ≤60 字。整幅识别会把多处文字拼成一句（实测 80–120 字），
   // 截断是"不猜位置"前提下唯一能守住的硬约束。
@@ -209,7 +209,7 @@ export function createSubtitleReader({
   // 水印必然重复，台词很少重复到阈值；阈值可调，默认 5。
   const MUTE_AFTER = Number(process.env.WATCH_ALONG_MUTE_AFTER || 3)
   const counts = new Map() // 归一化文本 -> 次数
-  const muted = new Map()  // 归一化文本 -> 次数（已静音，仍在记）
+  const muted = new Set()  // 已静音的相似组 key（仍在 counts 里计数）
   const normKey = (t) => t.replace(/[^\p{L}\p{N}]/gu, '').toLowerCase()
 
   async function feed({ buf, width, height }) {
@@ -253,7 +253,7 @@ export function createSubtitleReader({
         const batch = Math.max(1, band.batch ?? 1)
         if (batch === 1) {
           const got = (await recognize(encode(img))) ?? []
-          return { label, lines: got, batchN: 1 }
+          return { label, lines: got, batchN: 1, once: band.once }
         }
         // 攒 batch 帧，竖拼成一张再送：一次调用的固定开销摊到多帧上
         const arr = pendingBands.get(label) ?? []
@@ -266,17 +266,16 @@ export function createSubtitleReader({
       })
       const results = await Promise.all(jobs)
 
-      for (const { label, lines, batchN } of results) {
+      for (const { label, lines, batchN, once } of results) {
+        const bandOnce = once === true
         for (const raw of lines) {
           const line = String(raw).trim()
           if (line.length < minChars) { onDrop?.('too-short', line, label); continue }
           if (isNoise(line)) { onDrop?.('noise-format', line, label); continue }
-          // 噪音识别：不含 ≥2 个汉字的行几乎都是水印/清晰度/碎片（实测 1090P / II / HE / 7π）
-          if ((line.match(/[\u4e00-\u9fff]/g) ?? []).length <= 2) { onDrop?.('few-cjk', line, label); continue }
           const normLine = normText(line)
           const list = alias.get(label) ?? []
           // 先找相似度 ≥0.85 的已有 key，避免同一句被拆成多个变体
-          const near = list.find((e) => sim(e.norm, normLine) >= 0.75)
+          const near = list.find((e) => sim(e.norm, normLine) >= 0.8)
           const key = near?.key ?? `${label}|${normLine}`
           if (!near) {
             list.push({ key, norm: normLine })
@@ -290,12 +289,16 @@ export function createSubtitleReader({
             if (near) st.firstAt = at - intervalMs
           }
           st.hits += 1
-          if (!st.emitted && st.hits >= 2 && at - st.firstAt >= stableMs) {
+          const pass = bandOnce
+            ? st.hits >= 1                                   // 字幕：一拍即发（去重靠 emitted）
+            : st.hits >= 2 && at - st.firstAt >= stableMs     // 其他：两拍一致
+          if (!st.emitted && pass) {
             st.emitted = true
             const nk = normKey(line)
             const n = (counts.get(nk) ?? 0) + 1
             counts.set(nk, n)
-            if (n > MUTE_AFTER && line.length <= 8 && !/[。？！，；、]/.test(line)) {
+            const cjk = (line.match(/[\u4e00-\u9fff]/g) ?? []).length
+            if (n >= MUTE_AFTER && cjk < 2) {
               muted.set(nk, n)
               onDrop?.('muted-repeat', line, label)
               seen.set(key, st)
