@@ -161,10 +161,20 @@ export function startCapture({ region, fps = 8, onFrame, onClose } = {}) {
   // 窗口可能延伸出屏幕（实测高 2170 > 屏 2160）：先在入口钳位，
   // 否则 params 里的尺寸与实际帧不符，下游切图会越界。
   const screen = screenSize()
-  const region2 = {
+  // region 可能来自 windows.mjs（枚举窗口，给的是**逻辑像素** + dpiScale），
+  // 而 BitBlt 要物理像素。不换算就会抓到左上角一块（实测 motion/ocr 全 0）。
+  const k = Number(region.dpiScale) > 0 ? Number(region.dpiScale) : 1
+  const phys = {
     ...region,
-    width: Math.max(1, Math.min(Math.round(region.width), screen.width - Math.round(region.x))),
-    height: Math.max(1, Math.min(Math.round(region.height), screen.height - Math.round(region.y))),
+    x: Math.round(Number(region.x) * k),
+    y: Math.round(Number(region.y) * k),
+    width: Math.round(Number(region.width) * k),
+    height: Math.round(Number(region.height) * k),
+  }
+  const region2 = {
+    ...phys,
+    width: Math.max(1, Math.min(phys.width, screen.width - phys.x)),
+    height: Math.max(1, Math.min(phys.height, screen.height - phys.y)),
   }
   const params = { region: region2, width: region2.width, height: region2.height, fps }
   const interval = Math.max(50, Math.round(1000 / fps))
