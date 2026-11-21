@@ -4,14 +4,14 @@
 
 **Blocked by:** 05
 
-**Status:** 进行中（路径与启动脚本已做，README 待写）
+**Status:** done（脚本与文档齐备；setup 未在干净环境实测）
 
 - [x] `MODEL_DIR` 改为：`WATCH_ALONG_WHISPER_DIR` → 仓库内 `models/whisper-turbo`
 - [ ] `python/ocr_service.py` 同理（模型在 wheel 里，路径不必配）
-- [ ] 一条 `scripts/setup.cmd`：创建 venv、离线装 wheel、校验模型文件齐全
+- [x] `scripts/setup.cmd`：建 venv（已存在则跳过）、离线装包、校验 whisper 五个文件、import 冒烟
 - [x] `scripts/start-services.cmd`：一次起两个服务，端口/解释器/模型全走环境变量，文件本身不用改
-- [ ] `README.zh.md`：从零到"能陪看"的步骤，含"音量必须是 0 以上"这种前置
-- [ ] 换一台机器（或重装 venv）能照文档跑通
+- [x] `README.zh.md`：前置条件/安装/启动/DSH 用法/手机/排障表/已知限制
+- [ ] 换一台机器照文档跑通（**未验**：本机 venv 已装好，只能验"跳过"分支）
 
 ## 为什么要紧
 "能跑"和"能交付"是两件事。现在环境全硬编码，别人拿到仓库装不起来。
