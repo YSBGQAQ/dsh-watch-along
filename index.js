@@ -119,8 +119,17 @@ export function apply(ctx) {
   const disposers = []
   svcRef = service
   for (const tool of tools) {
-    disposers.push(ctx.tools.register(tool))
-    log(`已注册工具 ${tool.name}`)
+    // 单个工具注册失败不该拖垮其余：宿主可能对 schema 有额外要求。
+    // 失败要写进文件日志 —— 光靠宿主 logger 看不到（实测两次"工具不见了"都无迹可查）。
+    try {
+      disposers.push(ctx.tools.register(tool))
+      log(`已注册工具 ${tool.name}`)
+      trace(`注册成功 ${tool.name}`)
+    } catch (e) {
+      const msg = String(e?.message ?? e)
+      log(`注册失败 ${tool.name}: ${msg}`)
+      trace(`注册失败 ${tool.name}: ${msg}`)
+    }
   }
 
   trace(`apply 完成：注册 ${tools.length} 个工具（${tools.map((t) => t.name).join(',')}）`)
