@@ -27,12 +27,12 @@ export function createTools({ service, listWindows, attachments = null, outDir =
     }
   }
 
-  return [
+  const list = [
     {
       name: 'watch_windows',
       description:
         '列出当前可见的窗口标题。陪看前先用它挑一个窗口，把标题片段交给 watch_start。',
-      parameters: { type: 'object', properties: {} },
+      parameters: {},
       async execute() {
         const titles = [...new Set((listWindows?.() ?? []).filter(Boolean))]
         return { count: titles.length, titles }
@@ -42,12 +42,10 @@ export function createTools({ service, listWindows, attachments = null, outDir =
       name: 'watch_start',
       description:
         '开始陪看某个窗口：按标题片段找到窗口并起采集。找不到时会把可见窗口列出来。',
+      // 宿主 defineTool 要的是「属性表」（author spec），不是 JSON Schema：
+      // 必填标在属性上，编译时会提升到父级 required 数组。写顶层 type:'object' 会被静默忽略。
       parameters: {
-        type: 'object',
-        properties: {
-          window: { type: 'string', description: '窗口标题片段，例如「哔哩哔哩直播」' },
-        },
-        required: ['window'],
+        window: { type: 'string', required: true, description: '窗口标题片段，例如「哔哩哔哩直播」' },
       },
       async execute(args = {}) {
         return service.start({ window: args.window })
@@ -58,10 +56,7 @@ export function createTools({ service, listWindows, attachments = null, outDir =
       description:
         '取一张当前画面（PNG 落盘并返回路径与尺寸）。想看细节时用；返回的是文件，不是像素。',
       parameters: {
-        type: 'object',
-        properties: {
-          live: { type: 'boolean', description: 'true = 现在就抓一张（默认 true）' },
-        },
+        live: { type: 'boolean', description: 'true = 现在就抓一张（默认 true）' },
       },
       async execute(args = {}) {
         const shot = await service.frame({ live: args.live !== false })
@@ -86,11 +81,8 @@ export function createTools({ service, listWindows, attachments = null, outDir =
       description:
         '读画面/字幕/声音的事件流。传上次拿到的 nextId 作 sinceId 续读；wait 秒数内没新事件会返回 timedOut。',
       parameters: {
-        type: 'object',
-        properties: {
-          sinceId: { type: 'number', description: '上次收到的 nextId，首次不传' },
-          wait: { type: 'number', description: '长轮询最多等几秒，默认 20' },
-        },
+        sinceId: { type: 'number', description: '上次收到的 nextId，首次不传' },
+        wait: { type: 'number', description: '长轮询最多等几秒，默认 20' },
       },
       async execute(args = {}) {
         const waitSec = Number.isFinite(args.wait) ? Math.max(0, args.wait) : 20
@@ -103,7 +95,7 @@ export function createTools({ service, listWindows, attachments = null, outDir =
     {
       name: 'watch_status',
       description: '看当前状态：在盯哪个窗口、跑没跑、为什么失败。',
-      parameters: { type: 'object', properties: {} },
+      parameters: {},
       async execute() {
         return service.status()
       },
@@ -111,10 +103,15 @@ export function createTools({ service, listWindows, attachments = null, outDir =
     {
       name: 'watch_stop',
       description: '停止陪看，释放采集。',
-      parameters: { type: 'object', properties: {} },
+      parameters: {},
       async execute() {
         return service.stop()
       },
     },
   ]
+
+  // 宿主的 defineTool 要求每个工具都带 output.render（缺了会被静默丢弃，
+  // 表现是"注册成功但工具列表里没有"）。统一给一个 JSON 渲染。
+  const OUT = { render: (r) => (typeof r === 'string' ? r : JSON.stringify(r)) }
+  return list.map((t) => ({ ...t, output: OUT }))
 }

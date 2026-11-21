@@ -9,6 +9,7 @@ import { startCapture } from './src/capture.mjs'
 import { encode } from './src/png.mjs'
 import { createPipeline } from './vendor/dsh-see-now-main/src/pipeline.js'
 import { createSubtitleReader } from './src/ocr.mjs'
+import { defineToolCompat } from './vendor/dsh-see-now-main/src/define-tool.js'
 import http from 'node:http'
 import os from 'node:os'
 
@@ -122,7 +123,9 @@ export function apply(ctx) {
     // 单个工具注册失败不该拖垮其余：宿主可能对 schema 有额外要求。
     // 失败要写进文件日志 —— 光靠宿主 logger 看不到（实测两次"工具不见了"都无迹可查）。
     try {
-      disposers.push(ctx.tools.register(tool))
+      // 必须过 defineTool：它把属性表编译成宿主认的 JSON Schema 并校验 output。
+      // 直接 register 裸对象会被接受但不生效（实测：日志说注册了 6 个，会话里一个都没有）。
+      disposers.push(ctx.tools.register(defineToolCompat(tool)))
       log(`已注册工具 ${tool.name}`)
       trace(`注册成功 ${tool.name}`)
     } catch (e) {

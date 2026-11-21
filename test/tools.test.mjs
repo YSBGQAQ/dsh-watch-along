@@ -24,7 +24,8 @@ test('六个工具都注册出来，且带描述与参数', () => {
   assert.deepEqual(names, ['watch_windows', 'watch_start', 'watch_frame', 'watch_events', 'watch_status', 'watch_stop'])
   for (const t of tools) {
     assert.ok(t.description?.length > 5, `${t.name} 缺描述`)
-    assert.equal(t.parameters.type, 'object')
+    assert.equal(typeof t.parameters, 'object', `${t.name} 缺参数表`)
+    assert.equal(typeof t.output?.render, 'function', `${t.name} 缺 output.render（宿主会静默丢弃）`)
     assert.equal(typeof t.execute, 'function')
   }
 })
