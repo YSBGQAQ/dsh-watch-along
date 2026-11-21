@@ -176,3 +176,36 @@ dsh-watch-along: pending (waiting for services: @deepseek-ai/dsh-client-connecti
 要么用官方脚手架打包（可能有额外的构建产物标记），要么等宿主文档。
 
 **已撤**：`dsh.client` 从 package.json 移除，控制台恢复干净；`client.js` 保留待用。
+
+## 第三次结论（2026-11-21 09:59）：闭环矛盾，钉死
+
+导出 `inject: []` 后控制台变成：
+
+```
+dsh-watch-along: failed: Error: cannot get property "slots" without inject
+```
+
+**这条把结论钉死了**，因为它是宿主的 Cordis 容器在拒绝"访问未申报的服务"：
+
+| 写法 | 结果 |
+|---|---|
+| 不申报（`inject: []`） | `ctx.slots` **访问即抛** → entry failed |
+| 申报 5 个 | 5 个全 `ctx.get() === undefined` → entry pending |
+
+**两边都走不通，说明服务确实不在我们这条 entry 的作用域里。** 不是清单写错、不是格式不对、不是缺 locale。
+
+### 已排除（六项）
+1. `exports["./client"]` 路径 — 与 purge 一致
+2. `__ModuleLoader__.load` 包装形态 — 与 purge 一致
+3. `dsh.client.inject` 清单 — 照抄 purge 后 5 项全同
+4. `cordis.patch.yml` — 与 purge 一致
+5. 缺 locale — 补了没用
+6. 手写 vs 打包 — 加载器能读到（否则不会有 pending/failed 诊断）
+
+### 剩下的可能（都要读宿主源码才能确认）
+- 客户端服务由**另一套 composition** 提供，我们的包只进了服务端那份
+- purge 能跑是因为它**改过宿主**（目录里有 `lib/index.js.dshpurge.bak`）
+- 官方插件可能有构建期标记（如 `__PURGE_MODULE_URL__` 那样的注入）
+
+### 已撤
+`dsh.client` 移除，控制台恢复干净。`client.js` 保留，`apply` 里已做可选访问保护。
