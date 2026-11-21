@@ -11,7 +11,7 @@ export function createSpeechReader({
   onEvent,
   windowSec = 6,
   minChars = 2,
-  similarity = 0.9,
+  similarity = 0.8,
   now = Date.now,
 } = {}) {
   let busy = false
@@ -27,7 +27,8 @@ export function createSpeechReader({
       const b = norm(prev)
       if (!a || !b) return false
       if (a === b) return true
-      // 跨窗口常见：一句被切成两半，后一次只多/少几个字
+      // 跨窗口常见：一句被切成两半，或数字被识别成同音字（二是/2是），
+      // 阈值 0.8 能挡住一字之差，又不会把不同的句子吞掉。
       const short = a.length < b.length ? a : b
       const long = a.length < b.length ? b : a
       return long.includes(short) && short.length / long.length >= similarity

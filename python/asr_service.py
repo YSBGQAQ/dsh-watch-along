@@ -98,10 +98,19 @@ RATE = 16000
 # 连续累积的音频 + 已经交付过的句子（按时间码去重）。
 # 关键：每次都转**整个缓冲**，不截尾巴 —— 从句子中间开始转会丢上下文，
 # Whisper 会吐出"不分有"这种碎片（实测过，别改回去）。
-STATE = {"audio": np.zeros(0, dtype=np.float32), "delivered": []}
+STATE = {"audio": np.zeros(0, dtype=np.float32), "seen": []}
 KEEP_SEC = 20.0    # 留最近 20 秒：够给上下文，又不至于每次转太久
 MARGIN_SEC = 0.8   # 句尾离缓冲边缘太近的先不发，它可能还没说完
-DUP_SEC = 0.35     # 起点差这么多就当同一句，避免重复交付
+SEEN_MAX = 200     # 记住最近 200 句的归一化文本
+
+
+def _norm(text):
+    """归一化：只留字母数字与汉字，其余（标点/空白/数字写法差异）一律去掉。
+
+    按时间码去重是没用的 —— Whisper 对同一段音频每次切分边界都会变
+    （实测同一句出现过 t0=0 / 4.9 / 13.45 三种起点）。只有文本是稳定的。
+    """
+    return "".join(ch for ch in str(text).lower() if ch.isalnum() or "\u4e00" <= ch <= "\u9fff")
 
 
 def listen(seconds=3.0):
@@ -126,17 +135,20 @@ def listen(seconds=3.0):
         t0, t1 = float(line["t0"]), float(line["t1"])
         if t1 > total - MARGIN_SEC:
             continue  # 尾巴还没说完，下一拍再说
-        if any(abs(t0 - d0) < DUP_SEC and abs(t1 - d1) < DUP_SEC for d0, d1 in STATE["delivered"]):
-            continue  # 已经发过这一句
+        key = _norm(line["text"])
+        if not key:
+            continue
+        if key in STATE["seen"]:
+            continue  # 已经发过这一句（按文本判，不看时间码）
         done.append({"text": line["text"], "t0": round(t0, 2), "t1": round(t1, 2)})
-        STATE["delivered"].append((t0, t1))
+        STATE["seen"].append(key)
+        if len(STATE["seen"]) > SEEN_MAX:
+            STATE["seen"] = STATE["seen"][-SEEN_MAX:]
 
-    # 裁剪缓冲：所有时间码一起往前平移，否则下次算出来的位置全错
+    # 裁剪缓冲。去重是按文本的，所以这里不用再平移时间码。
     if total > KEEP_SEC:
         drop = total - KEEP_SEC
         STATE["audio"] = buf[int(drop * RATE):]
-        STATE["delivered"] = [(max(0.0, d0 - drop), max(0.0, d1 - drop)) for d0, d1 in STATE["delivered"]]
-        STATE["delivered"] = [x for x in STATE["delivered"] if x[1] > 0.05]
         total = KEEP_SEC
 
     return {"lines": done, "ms": res["ms"], "silent": False, "rms": round(rms, 5), "total": round(total, 2)}
@@ -144,7 +156,7 @@ def listen(seconds=3.0):
 
 def reset():
     global STATE
-    STATE = {"audio": np.zeros(0, dtype=np.float32), "delivered": []}
+    STATE = {"audio": np.zeros(0, dtype=np.float32), "seen": []}
 
 
 class Handler(BaseHTTPRequestHandler):
