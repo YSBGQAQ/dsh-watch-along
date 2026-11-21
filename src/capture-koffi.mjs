@@ -156,6 +156,17 @@ export function capture({ x = 0, y = 0, width, height } = {}) {
  */
 export function startCapture({ region, fps = 8, onFrame, onClose } = {}) {
   if (!region || typeof region !== 'object') throw new TypeError('startCapture 需要 region')
+  // service 会读 capture.params.{fps,region,width,height}（旧 ffmpeg 采集器就有这段）。
+  // 接口对齐是硬要求：少了它 watch_start 会死在 status() 上（实测报 reading 'fps'）。
+  // 窗口可能延伸出屏幕（实测高 2170 > 屏 2160）：先在入口钳位，
+  // 否则 params 里的尺寸与实际帧不符，下游切图会越界。
+  const screen = screenSize()
+  const region2 = {
+    ...region,
+    width: Math.max(1, Math.min(Math.round(region.width), screen.width - Math.round(region.x))),
+    height: Math.max(1, Math.min(Math.round(region.height), screen.height - Math.round(region.y))),
+  }
+  const params = { region: region2, width: region2.width, height: region2.height, fps }
   const interval = Math.max(50, Math.round(1000 / fps))
   let i = 0
   let stopped = false
@@ -163,7 +174,7 @@ export function startCapture({ region, fps = 8, onFrame, onClose } = {}) {
     if (stopped) return
     i += 1
     try {
-      const frame = capture(region)
+      const frame = capture(region2)
       onFrame?.({ i, t: Date.now(), ...frame })
     } catch (e) {
       // 抓不到不代表要停：窗口可能暂时最小化，下一拍继续
@@ -171,6 +182,7 @@ export function startCapture({ region, fps = 8, onFrame, onClose } = {}) {
     }
   }, interval)
   return {
+    params,
     stop() {
       stopped = true
       clearInterval(timer)
