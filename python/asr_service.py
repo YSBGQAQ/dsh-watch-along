@@ -114,6 +114,10 @@ def _is_dup(key):
     for prev in STATE["seen"]:
         if prev == key:
             return True
+        # 同一段音频这次切成长句、下次切成短语（实测很常见）：
+        # 只要一方被另一方包含，就当同一句，别再发一遍。
+        if len(key) >= 4 and (key in prev or prev in key):
+            return True
         # 长度差太多的直接跳过，省得算相似度
         if abs(len(prev) - len(key)) > max(3, int(len(key) * 0.3)):
             continue
