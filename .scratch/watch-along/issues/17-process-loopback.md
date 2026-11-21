@@ -5,17 +5,27 @@
 
 **Blocked by:** 12（先证明现有采集可用，再换）
 
-**Status:** ready-for-agent
+**Status:** 进行中（配置面已就绪，采集未实现）
 
 参考：`vendor/dsh-see-now-main/examples/floating-chat/procloopback.py`（纯 ctypes，无新依赖）
 
 - [ ] 默认行为不变：整机环回
-- [ ] 设置项 `audioSource`: `system`（默认）/ `process:<pid 或进程名>`
+- [x] 设置项 `audioSource`: `system`（默认）/ `process:<pid|名字>`，非法值拒收
 - [ ] 指定进程后，录到的只有该进程输出（验证：放视频 + 同时响一声系统提示音，提示音不应出现）
 - [ ] 进程退出后自动回退到整机环回，并写一条日志
-- [ ] 拿不到进程回环能力时**静默降级**到整机，不报错
+- [x] 现在就是降级状态：设了 `process:` 会**明确打一行日志**再回退整机（不静默）
 
 ## 为什么值得做
 1. 现在会录到**我们自己念出来的话**（将来上 TTS 会自我循环）
 2. 微信/QQ 提示音会混进字幕
 3. 进程回环与"哪台扬声器"无关——换设备不受影响
+
+## 为什么只做了配置面（2026-11-21）
+进程级回环要照 see-now 的 `procloopback.py`（纯 ctypes 的 WASAPI 进程环回，约三百行）。
+这部分**只能真机验**，而今天没有余量做"写完→跑了才知道对不对"的循环。
+所以先立配置面：
+- `audioSource` 进设置模型（含校验），环境变量 `WATCH_ALONG_AUDIO_SOURCE` 可覆盖
+- 设了非 `system` 时，**明确打印"尚未实现，已回退整机混音"** ——
+  静默忽略配置最糟：用户会以为"只录视频"生效了，其实录的还是整机
+
+剩下：把 `procloopback.py` 接进来，替换 `_capture_loop` 里的设备来源。

@@ -12,7 +12,8 @@ export const DEFAULTS = Object.freeze({
   subtitle: true,
   speech: true,
   speechPerMin: 6,
-  host: '0.0.0.0', // 手机端监听地址：0.0.0.0 = 局域网可连，127.0.0.1 = 只本机
+  host: '0.0.0.0',
+  audioSource: 'system', // system = 整机混音；process:<pid|名字> = 只录某个进程（尚未实现采集） // 手机端监听地址：0.0.0.0 = 局域网可连，127.0.0.1 = 只本机
   // 高级（折叠）：裸阈值，正常不该改
   region: { top: 0, height: 1 },
   maxWaitSec: 15,
@@ -60,6 +61,12 @@ export function validate(patch, current = DEFAULTS) {
         if (typeof raw !== 'boolean') reject(key, '必须是 true / false')
         else value[key] = raw
         break
+      case 'audioSource': {
+        const v = String(raw ?? '')
+        if (v !== 'system' && !/^process:.+/.test(v)) reject(key, '只能是 system 或 process:<pid|进程名>')
+        else value.audioSource = v
+        break
+      }
       case 'host':
         if (!['0.0.0.0', '127.0.0.1', 'localhost'].includes(raw)) reject(key, '只能是 0.0.0.0 / 127.0.0.1')
         else value.host = raw

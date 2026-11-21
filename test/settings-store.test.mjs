@@ -50,3 +50,11 @@ test('监听地址可调，非法的拒掉', () => {
   assert.equal(bad.ok, false)
   assert.equal(bad.rejected[0].field, 'host')
 })
+
+test('录音来源只接受 system 或 process:<x>', () => {
+  assert.equal(validate({ audioSource: 'system' }).ok, true)
+  assert.equal(validate({ audioSource: 'process:mpv' }).ok, true)
+  const bad = validate({ audioSource: 'speaker' })
+  assert.equal(bad.ok, false)
+  assert.equal(bad.rejected[0].field, 'audioSource')
+})

@@ -109,6 +109,11 @@ def _capture_loop():
     变了就重开流。
     """
     ctypes.windll.ole32.CoInitialize(None)  # COM 是按线程的，这个线程要自己初始化
+    # 录音来源：默认整机混音。process:<x> 暂时没有实现采集，明确回退并留日志 ——
+    # 静默忽略配置比报错更糟，用户会以为"只录视频"生效了。
+    src = os.environ.get("WATCH_ALONG_AUDIO_SOURCE", "system")
+    if src != "system":
+        print(f"[asr] audioSource={src} 尚未实现，已回退整机混音", flush=True)
     try:
         import soundcard as sc
     except Exception as e:
