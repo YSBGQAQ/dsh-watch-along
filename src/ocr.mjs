@@ -79,6 +79,24 @@ function isNoise(line) {
   return NOISE_RES.some((re) => re.test(t))
 }
 
+function downscale({ width, height, rgb }, maxW) {
+  const k = maxW / width
+  const W = maxW
+  const H = Math.max(1, Math.round(height * k))
+  const out = Buffer.alloc(W * H * 3)
+  for (let y = 0; y < H; y += 1) {
+    const sy = Math.min(height - 1, Math.floor(((y + 0.5) * height) / H))
+    for (let x = 0; x < W; x += 1) {
+      const s = (sy * width + Math.min(width - 1, Math.floor(((x + 0.5) * width) / W))) * 3
+      const d = (y * W + x) * 3
+      out[d] = rgb[s]
+      out[d + 1] = rgb[s + 1]
+      out[d + 2] = rgb[s + 2]
+    }
+  }
+  return { width: W, height: H, rgb: out }
+}
+
 export function createSubtitleReader({
   recognize,
   encode,
@@ -99,8 +117,10 @@ export function createSubtitleReader({
   bands = [
     // every: 每 n 轮跑一次。字幕是主角（每轮），正文可以低频（每 4 轮）——
     // 一轮只调一次 OCR，周期才能压到 0.6s 左右，字幕期内才凑得齐两拍。
-    { top: 0.32, height: 0.4, label: 'mid', scale: 2, every: 4 },
-    { top: 0.66, height: 0.34, label: 'bottom', scale: 3, every: 1 },
+    // 默认只跑字幕带：一次识别 ≈ 一次 OCR 的耗时，周期才压得下来。
+    // mid（正文）每 4 轮一次即可，需要时把注释打开。
+    // { top: 0.32, height: 0.4, label: 'mid', scale: 2, every: 4 },
+    { top: 0.66, height: 0.34, label: 'bottom', scale: 3, every: 1, maxW: 1100 },
   ],
   // spec 要求 text ≤60 字。整幅识别会把多处文字拼成一句（实测 80–120 字），
   // 截断是"不猜位置"前提下唯一能守住的硬约束。
@@ -150,7 +170,11 @@ export function createSubtitleReader({
         buf.copy(rgb, 0, y0 * width * 3, y1 * width * 3)
         const below = Number(process.env.OCR_UPSCALE_BELOW || 1200)
         const sc = width >= below ? 1 : (band.scale ?? 1)
-        const got = (await recognize(encode(sc === 1 ? { width, height: h, rgb } : upscale({ width, height: h, rgb, k: sc })))) ?? []
+        // 送图尺寸封顶：OCR 耗时基本随像素线性增长，1688 宽没必要全送
+        const maxW = band.maxW ?? Number(process.env.OCR_MAX_WIDTH || 0)
+        let img = sc === 1 ? { width, height: h, rgb } : upscale({ width, height: h, rgb, k: sc })
+        if (maxW && img.width > maxW) img = downscale(img, maxW)
+        const got = (await recognize(encode(img))) ?? []
         return { label, lines: got }
       })
       const results = await Promise.all(jobs)
