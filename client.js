@@ -85,6 +85,16 @@ window.__ModuleLoader__.load({
         ))
     }
 
-    return { apply, inject: ['@deepseek-ai/dsh-client-ui-slots'] }
+    // 注入清单照抄本机跑得通的 dsh-purge-community（它用同一套 ui-slots）。
+    return {
+      apply,
+      inject: [
+        '@deepseek-ai/dsh-client-connection',
+        '@deepseek-ai/dsh-client-runtime',
+        '@deepseek-ai/dsh-client-locale',
+        '@deepseek-ai/dsh-client-ui-slots',
+        '@deepseek-ai/dsh-client-ui-settings',
+      ],
+    }
   },
 })
