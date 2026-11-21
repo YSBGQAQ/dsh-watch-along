@@ -130,6 +130,15 @@ export function apply(ctx, opts = {}) {
       if (e?.error) return log(`字幕通道：${e.error}`)
       svcRef?.emit('ocr', e)
       log(`字幕[${e.band}]：${e.text}`)
+      // 发出的事件也要落盘，否则"准确率/召回率"永远只能靠抽样目测
+      try {
+        fs.appendFileSync(
+          path.join(HERE, '.scratch', 'run', 'ocr-events.log'),
+          `${new Date().toISOString()}\t${e.band}\t${e.text}\n`,
+        )
+      } catch {
+        /* 写不进不影响主链路 */
+      }
     },
     onDrop: (reason, text, band) => {
       // 单独落文件：宿主日志读不到，这是唯一能统计"为什么少了"的地方
