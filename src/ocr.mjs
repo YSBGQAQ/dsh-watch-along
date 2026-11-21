@@ -237,11 +237,11 @@ export function createSubtitleReader({
           if (line.length < minChars) { onDrop?.('too-short', line, label); continue }
           if (isNoise(line)) { onDrop?.('noise-format', line, label); continue }
           // 噪音识别：不含 ≥2 个汉字的行几乎都是水印/清晰度/碎片（实测 1090P / II / HE / 7π）
-          if ((line.match(/[\u4e00-\u9fff]/g) ?? []).length < 2) { onDrop?.('few-cjk', line, label); continue }
+          if ((line.match(/[\u4e00-\u9fff]/g) ?? []).length <= 2) { onDrop?.('few-cjk', line, label); continue }
           const normLine = normText(line)
           const list = alias.get(label) ?? []
           // 先找相似度 ≥0.85 的已有 key，避免同一句被拆成多个变体
-          const near = list.find((e) => sim(e.norm, normLine) >= 0.85)
+          const near = list.find((e) => sim(e.norm, normLine) >= 0.75)
           const key = near?.key ?? `${label}|${normLine}`
           if (!near) {
             list.push({ key, norm: normLine })
