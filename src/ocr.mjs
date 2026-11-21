@@ -97,8 +97,10 @@ export function createSubtitleReader({
   // 默认只跑 mid + bottom：top 是浏览器标签/书签/地址栏，实测整屏噪音、
   // 而且每轮多花一次 OCR。需要"读页面顶部文字"时再显式打开 top。
   bands = [
-    { top: 0.32, height: 0.4, label: 'mid', scale: 2 },
-    { top: 0.66, height: 0.34, label: 'bottom', scale: 3 },
+    // every: 每 n 轮跑一次。字幕是主角（每轮），正文可以低频（每 4 轮）——
+    // 一轮只调一次 OCR，周期才能压到 0.6s 左右，字幕期内才凑得齐两拍。
+    { top: 0.32, height: 0.4, label: 'mid', scale: 2, every: 4 },
+    { top: 0.66, height: 0.34, label: 'bottom', scale: 3, every: 1 },
   ],
   // spec 要求 text ≤60 字。整幅识别会把多处文字拼成一句（实测 80–120 字），
   // 截断是"不猜位置"前提下唯一能守住的硬约束。
@@ -117,10 +119,11 @@ export function createSubtitleReader({
   // bottom 带同时有水印（不变）和字幕（每两秒换），字幕一变整句就变，
   // 相似度永远到不了 0.85，于是一条都发不出来（实测 20 秒 0 条）。
   // 改成以"一行文字"为单位累计出现次数：同key 两拍以上且间隔够久才发。
+  let round = 0
   const seen = new Map() // key -> { hits, firstAt, emitted }
   // 会话内重复计数：不判断"这是什么"，只看"它是不是在不停重复"。
   // 水印必然重复，台词很少重复到阈值；阈值可调，默认 5。
-  const MUTE_AFTER = Number(process.env.WATCH_ALONG_MUTE_AFTER || 5)
+  const MUTE_AFTER = Number(process.env.WATCH_ALONG_MUTE_AFTER || 3)
   const counts = new Map() // 归一化文本 -> 次数
   const muted = new Map()  // 归一化文本 -> 次数（已静音，仍在记）
   const normKey = (t) => t.replace(/[^\p{L}\p{N}]/gu, '').toLowerCase()
@@ -135,7 +138,9 @@ export function createSubtitleReader({
       const at = now()
       // 三带**并发**识别（streamvision 也是并发）：串行时一轮 = n×OCR，
       // 周期被拉长，字幕存续期内凑不齐两拍 → 只出水印、不出台词。
+      round += 1
       const jobs = bands.map(async (band) => {
+        if ((band.every ?? 1) > 1 && round % (band.every ?? 1) !== 0) return { label: band.label, lines: [] }
         const label = band.label ?? 'band'
         const y0 = Math.max(0, Math.floor(height * (band.top ?? 0)))
         const y1 = Math.min(height, Math.ceil(height * ((band.top ?? 0) + (band.height ?? 1))))

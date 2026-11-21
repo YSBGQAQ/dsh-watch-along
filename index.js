@@ -132,8 +132,15 @@ export function apply(ctx, opts = {}) {
       log(`字幕[${e.band}]：${e.text}`)
     },
     onDrop: (reason, text, band) => {
-      // 丢弃也要留痕：否则"为什么这段没字幕"只能靠猜
-      log(`字幕丢弃[${band}/${reason}]：${String(text).slice(0, 40)}`)
+      // 单独落文件：宿主日志读不到，这是唯一能统计"为什么少了"的地方
+      try {
+        fs.appendFileSync(
+          path.join(HERE, '.scratch', 'run', 'ocr-drops.log'),
+          `${new Date().toISOString()} ${band}\t${reason}\t${String(text).slice(0, 40)}\n`,
+        )
+      } catch {
+        /* 写不进不影响主链路 */
+      }
     },
   })
 
