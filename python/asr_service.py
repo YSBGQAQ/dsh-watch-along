@@ -1,36 +1,62 @@
-"""环回录音 + 转写服务：只做一件事——把"电脑现在在放什么声音"变成文字。
+"""环回录音 + 转写服务：把"电脑现在在放什么声音"变成文字。
 
 两种用法：
-  python asr_service.py --once 5            # 录 5 秒、转写、打印 JSON（验证用）
-  python asr_service.py --port 8766         # 常驻，POST /listen {"seconds":5} → {"ok":true,"lines":[...]}
+  python asr_service.py --once 8            # 录 8 秒、转写、打印 JSON（验证用）
+  python asr_service.py --port 8766         # 常驻，POST /listen → 只返回"新说完"的句子
 
-为什么要常驻：Whisper 加载 1.6GB 权重约 3–6 秒，而一句话的转写只要几百毫秒。
-每次起进程的话，时间全花在加载上（同 ADR 0003 的理由）。
+## 为什么录音要常驻线程（2026-11-21 改）
+
+原来是"每次请求开流录 3 秒、关流"。实测两个后果：
+
+1. **丢音频**：两次请求之间（约 2 秒）声音直接没了。服务日志里成片的
+   `data discontinuity in recording` 就是这个。对着字幕文件核对，覆盖率只有 52%
+   —— 丢的不是"听不出来"，是"根本没听见"。
+2. **时间轴漂**：缓冲里是拼起来的，和视频实际进度越差越远。
+
+现在录音在一个后台线程里**一直开着**，往一个连续缓冲里追加；`/listen` 只做"转写 + 交付"。
 """
 import ctypes
 import json
 import os
+import sys
+import threading
 import time
 from difflib import SequenceMatcher
-import sys
-import time
-import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import numpy as np
 
 MODEL_DIR = r"C:\Users\24206\Desktop\源码与作者说明\Whisper turbo"
+RATE = 16000
+KEEP_SEC = 20.0    # 缓冲只留最近 20 秒：够给上下文，又不至于每次转太久
+MARGIN_SEC = 0.8   # 句尾离缓冲边缘太近的先不发 —— 它可能还没说完
+SEEN_MAX = 200     # 记住最近 200 句的归一化文本
+
+DUMP = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".scratch", "run", "asr-out.jsonl"
+)
+
 MODEL = None
+
+# 连续录音的共享缓冲。`base` = 已经裁掉的秒数，对外时间 = base + 缓冲内时间。
+ACC = {
+    "buf": np.zeros(0, dtype=np.float32),
+    "base": 0.0,
+    "emitted_until": 0.0,
+    "seen": [],
+    "thread": None,
+    "stop": False,
+    "error": None,
+}
 
 
 def _register_cuda_dlls():
     """把 nvidia-* wheel 里的 DLL 目录挂进搜索路径。
 
     不挂的话，ctranslate2 能加载权重、却在第一次 encode 时抛
-    `Library cublas64_12.dll is not found or cannot be loaded`——
+    `Library cublas64_12.dll is not found or cannot be loaded` ——
     模型"加载成功"但一用就炸，最容易被误判成显存问题。
     """
-    import os
     import site
 
     for base in site.getsitepackages():
@@ -52,7 +78,6 @@ def load():
     from faster_whisper import WhisperModel
 
     t0 = time.time()
-    # device="auto"：有 CUDA 就用，没有就 CPU。compute_type 跟着退。
     for device, ctype in (("cuda", "float16"), ("cpu", "int8")):
         try:
             MODEL = WhisperModel(MODEL_DIR, device=device, compute_type=ctype)
@@ -63,30 +88,71 @@ def load():
     raise RuntimeError("模型加载失败（GPU 与 CPU 都试过了）")
 
 
-def record(seconds=5.0, rate=16000):
-    """录系统输出（环回）。没有环回设备时抛错，让上层如实报告。"""
-    # WASAPI 走 COM，而 COM 是**按线程**初始化的：ThreadingHTTPServer 每个请求
-    # 都在新线程里，不在这里 CoInitialize 就会报 `Error 0x800401f0`
-    # （CO_E_NOTINITIALIZED，字面意思是"没调过 CoInitialize"）。
-    ctypes.windll.ole32.CoInitialize(None)
-    import soundcard as sc
+def _capture_loop():
+    """后台线程：开一次流，一直往里灌 1/4 秒的块。"""
+    ctypes.windll.ole32.CoInitialize(None)  # COM 是按线程的，这个线程要自己初始化
+    try:
+        import soundcard as sc
 
-    spk = sc.default_speaker()
-    mic = sc.get_microphone(id=str(spk.name), include_loopback=True)
-    with mic.recorder(samplerate=rate, channels=1) as rec:
-        data = rec.record(numframes=int(rate * seconds))
-    return np.asarray(data).reshape(-1).astype(np.float32)
+        spk = sc.default_speaker()
+        mic = sc.get_microphone(id=str(spk.name), include_loopback=True)
+        with mic.recorder(samplerate=RATE, channels=1) as rec:
+            print(f"[asr] 开始连续录音：{spk.name}", flush=True)
+            while not ACC["stop"]:
+                chunk = np.asarray(rec.record(numframes=RATE // 4)).reshape(-1).astype(np.float32)
+                if len(chunk):
+                    ACC["buf"] = np.concatenate([ACC["buf"], chunk])
+    except Exception as e:  # 录音挂了要让人看得见，否则表现为"一直没字幕"
+        ACC["error"] = f"{type(e).__name__}: {e}"
+        print(f"[asr] 录音线程出错：{ACC['error']}", flush=True)
 
 
-def transcribe(audio, rate=16000):
+def start_capture():
+    if ACC["thread"] is not None:
+        return
+    ACC["stop"] = False
+    ACC["thread"] = threading.Thread(target=_capture_loop, daemon=True, name="capture")
+    ACC["thread"].start()
+
+
+def _norm(text):
+    """归一化：只留字母数字与汉字。只有文本是稳定的，时间码会漂。"""
+    return "".join(ch for ch in str(text).lower() if ch.isalnum() or "\u4e00" <= ch <= "\u9fff")
+
+
+def _is_dup(key):
+    """模糊判重：ASR 对同一段音频每次会给出一字之差（是/式、夜戏/夜系）。"""
+    for prev in ACC["seen"]:
+        if prev == key:
+            return True
+        if len(key) >= 4 and (key in prev or prev in key):
+            return True
+        if abs(len(prev) - len(key)) > max(3, int(len(key) * 0.3)):
+            continue
+        if SequenceMatcher(None, prev, key).ratio() >= 0.85:
+            return True
+    return False
+
+
+def _dump(text, t0, t1):
+    """把交付的每一行落到 jsonl，供事后和字幕文件对照（绝对时间才有对照价值）。"""
+    try:
+        os.makedirs(os.path.dirname(DUMP), exist_ok=True)
+        with open(DUMP, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"t0": t0, "t1": t1, "text": text}, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+def transcribe(audio):
     model = load()
     t0 = time.time()
     segments, info = model.transcribe(
         audio,
         language="zh",
-        vad_filter=True,          # 静音切片交给库自带的 VAD
+        vad_filter=True,
         vad_parameters={"min_silence_duration_ms": 400},
-        beam_size=1,              # 实时场景不需要大 beam
+        beam_size=1,
         condition_on_previous_text=False,
     )
     lines = []
@@ -97,59 +163,14 @@ def transcribe(audio, rate=16000):
     return {"lines": lines, "ms": round((time.time() - t0) * 1000, 1), "lang": info.language}
 
 
-RATE = 16000
-# 连续累积的音频 + 已经交付过的句子（按时间码去重）。
-# 关键：每次都转**整个缓冲**，不截尾巴 —— 从句子中间开始转会丢上下文，
-# Whisper 会吐出"不分有"这种碎片（实测过，别改回去）。
-# `emitted_until`：已经交付到第几秒。**输入整段（保上下文），输出按时间过滤** ——
-# 这是关键区别：截输入会丢上下文（吐碎片），截输出只会挡住重复。
-# `base` = 已经被裁掉的秒数。所有对外的时间码 = base + 缓冲内时间。
-# 不加它，缓冲一滑，时间就从 0 重新开始，跟视频/字幕永远对不上（实测踩过）。
-STATE = {"audio": np.zeros(0, dtype=np.float32), "emitted_until": 0.0, "seen": [], "base": 0.0}
-KEEP_SEC = 20.0    # 留最近 20 秒：够给上下文，又不至于每次转太久
-MARGIN_SEC = 0.8   # 句尾离缓冲边缘太近的先不发，它可能还没说完
-SEEN_MAX = 200     # 记住最近 200 句的归一化文本
-
-
-def _is_dup(key):
-    """模糊判重：ASR 对同一段音频每次会给出一字之差（是/式、夜戏/夜系、归翼/归位）。
-
-    精确相等挡不住这些，所以按相似度比；阈值 0.85 是"一字之差"和"两句不同话"的分界。
-    只在最近 SEEN_MAX 条里比，成本可以忽略。
-    """
-    for prev in STATE["seen"]:
-        if prev == key:
-            return True
-        # 同一段音频这次切成长句、下次切成短语（实测很常见）：
-        # 只要一方被另一方包含，就当同一句，别再发一遍。
-        if len(key) >= 4 and (key in prev or prev in key):
-            return True
-        # 长度差太多的直接跳过，省得算相似度
-        if abs(len(prev) - len(key)) > max(3, int(len(key) * 0.3)):
-            continue
-        if SequenceMatcher(None, prev, key).ratio() >= 0.85:
-            return True
-    return False
-
-
-def _norm(text):
-    """归一化：只留字母数字与汉字，其余（标点/空白/数字写法差异）一律去掉。
-
-    按时间码去重是没用的 —— Whisper 对同一段音频每次切分边界都会变
-    （实测同一句出现过 t0=0 / 4.9 / 13.45 三种起点）。只有文本是稳定的。
-    """
-    return "".join(ch for ch in str(text).lower() if ch.isalnum() or "\u4e00" <= ch <= "\u9fff")
-
-
-def listen(seconds=3.0):
-    """录一小段、追加到缓冲，整段转写，只交付"已经说完且没发过"的句子。"""
-    global STATE
-    chunk = record(seconds)
-    if len(chunk):
-        STATE["audio"] = np.concatenate([STATE["audio"], chunk])
-
-    buf = STATE["audio"]
+def pull():
+    """转写当前缓冲，交付"已经说完且没发过"的句子。不录音 —— 录音在另一个线程里跑。"""
+    start_capture()
+    buf = ACC["buf"]
     total = len(buf) / RATE
+
+    if ACC["error"]:
+        return {"lines": [], "ms": 0, "silent": True, "rms": 0.0, "total": round(total, 2), "error": ACC["error"]}
     if total < 1.0:
         return {"lines": [], "ms": 0, "silent": True, "rms": 0.0, "total": round(total, 2)}
 
@@ -160,58 +181,43 @@ def listen(seconds=3.0):
     res = transcribe(buf)
     done = []
     for line in res["lines"]:
-        t0, t1 = float(line["t0"]), float(line["t1"])
-        if t1 > total - MARGIN_SEC:
-            continue  # 尾巴还没说完，下一拍再说
+        t0 = ACC["base"] + float(line["t0"])
+        t1 = ACC["base"] + float(line["t1"])
+        if t1 > ACC["base"] + total - MARGIN_SEC:
+            continue  # 尾巴还没说完
+        if t1 <= ACC["emitted_until"] + 0.05:
+            continue  # 已经交付过（时间水位是绝对的）
         key = _norm(line["text"])
-        if not key:
+        if not key or _is_dup(key):
             continue
-        t0_abs = STATE["base"] + t0
-        t1_abs = STATE["base"] + t1
-        if t1_abs <= STATE["emitted_until"] + 0.05:
-            continue  # 这一段已经在之前交付过了（时间水位）
-        if _is_dup(key):
-            continue  # 文本重复：同一句换了个说法
-        done.append({"text": line["text"], "t0": round(t0_abs, 2), "t1": round(t1_abs, 2)})
-        _dump(line["text"], round(t0_abs, 2), round(t1_abs, 2))
-        STATE["seen"].append(key)
-        if len(STATE["seen"]) > SEEN_MAX:
-            STATE["seen"] = STATE["seen"][-SEEN_MAX:]
-        STATE["emitted_until"] = max(STATE["emitted_until"], t1_abs)
+        done.append({"text": line["text"], "t0": round(t0, 2), "t1": round(t1, 2)})
+        _dump(line["text"], round(t0, 2), round(t1, 2))
+        ACC["seen"].append(key)
+        if len(ACC["seen"]) > SEEN_MAX:
+            ACC["seen"] = ACC["seen"][-SEEN_MAX:]
+        ACC["emitted_until"] = max(ACC["emitted_until"], t1)
 
-    # 裁剪缓冲。去重是按文本的，所以这里不用再平移时间码。
+    # 裁剪缓冲：只前移 base，水位是绝对时间，不用再动
     if total > KEEP_SEC:
         drop = total - KEEP_SEC
-        STATE["audio"] = buf[int(drop * RATE):]
-        STATE["base"] += drop  # 时间基准前移；水位是绝对时间，不用再动
+        ACC["buf"] = buf[int(drop * RATE):]
+        ACC["base"] += drop
         total = KEEP_SEC
 
     return {"lines": done, "ms": res["ms"], "silent": False, "rms": round(rms, 5), "total": round(total, 2)}
 
 
-DUMP = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".scratch", "run", "asr-out.jsonl")
-
-
-def _dump(line, t0, t1):
-    """把交付的每一行落到 jsonl，供事后和字幕文件对照。
-
-    只有"绝对时间"才有对照价值 —— 所以记的是从本次会话开始算的秒数。
-    """
+def reset():
+    ACC["buf"] = np.zeros(0, dtype=np.float32)
+    ACC["base"] = 0.0
+    ACC["emitted_until"] = 0.0
+    ACC["seen"] = []
+    ACC["error"] = None
     try:
-        os.makedirs(os.path.dirname(DUMP), exist_ok=True)
-        with open(DUMP, "a", encoding="utf-8") as f:
-            f.write(json.dumps({"t0": t0, "t1": t1, "text": line}, ensure_ascii=False) + "\n")
+        if os.path.exists(DUMP):
+            os.remove(DUMP)
     except Exception:
         pass
-
-
-def reset():
-    global STATE
-    # `emitted_until`：已经交付到第几秒。**输入整段（保上下文），输出按时间过滤** ——
-# 这是关键区别：截输入会丢上下文（吐碎片），截输出只会挡住重复。
-# `base` = 已经被裁掉的秒数。所有对外的时间码 = base + 缓冲内时间。
-# 不加它，缓冲一滑，时间就从 0 重新开始，跟视频/字幕永远对不上（实测踩过）。
-STATE = {"audio": np.zeros(0, dtype=np.float32), "emitted_until": 0.0, "seen": [], "base": 0.0}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -227,7 +233,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        self._send({"ok": True, "ready": MODEL is not None})
+        self._send({"ok": True, "ready": MODEL is not None, "capturing": ACC["thread"] is not None})
 
     def do_POST(self):
         try:
@@ -235,18 +241,23 @@ class Handler(BaseHTTPRequestHandler):
             req = json.loads(self.rfile.read(n) or b"{}")
             if req.get("reset"):
                 reset()
-            self._send({"ok": True, **listen(float(req.get("seconds", 3)))})
+            self._send({"ok": True, **pull()})
         except Exception as e:
             self._send({"ok": False, "error": f"{type(e).__name__}: {e}"}, 500)
 
 
 if __name__ == "__main__":
     if len(sys.argv) >= 3 and sys.argv[1] == "--once":
-        print(json.dumps(listen(float(sys.argv[2])), ensure_ascii=False))
+        secs = float(sys.argv[2])
+        start_capture()
+        print(f"[asr] 录 {secs}s …", flush=True)
+        time.sleep(secs)
+        print(json.dumps(pull(), ensure_ascii=False))
     else:
         port = 8766
         if "--port" in sys.argv:
             port = int(sys.argv[sys.argv.index("--port") + 1])
         print("[asr] 预热模型…", flush=True)
         load()
+        start_capture()
         ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
