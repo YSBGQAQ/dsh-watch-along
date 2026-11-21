@@ -235,7 +235,12 @@ def transcribe(audio):
         audio,
         language="zh",
         vad_filter=True,
-        vad_parameters={"min_silence_duration_ms": 400},
+        vad_parameters={
+            # 按静音切句：说话后静音超过这个时长就算一句结束
+            "min_silence_duration_ms": int(os.environ.get("WATCH_ALONG_VAD_SILENCE_MS", 600)),
+            # 一直没人停顿时，超过这个长度强制切，防止一句吞掉整段
+            "max_speech_duration_s": float(os.environ.get("WATCH_ALONG_VAD_MAX_SEC", 10)),
+        },
         beam_size=1,
         condition_on_previous_text=False,
     )

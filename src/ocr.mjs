@@ -284,7 +284,7 @@ export function createSubtitleReader({
           }
           let st = seen.get(key)
           if (!st) {
-            st = { hits: 0, firstAt: at - Math.max(0, batchN ?? 1) * intervalMs, emitted: false }
+            st = { hits: 0, firstAt: at - Math.max(0, batchN ?? 1) * intervalMs, firstSeenReal: at / 1000, emitted: false }
             // 归并到已有 key 时，代表这一句在更早的拍里已经出现过
             if (near) st.firstAt = at - intervalMs
           }
@@ -305,7 +305,16 @@ export function createSubtitleReader({
               continue
             }
             if (muted.has(nk)) { onDrop?.('muted-repeat', line, label); seen.set(key, st); continue }
-            const ev = { band: label, text: line, hits: st.hits, similarity: 1 }
+            // t0/t1 成对，和 speech 事件、字幕文件同构；
+            // t1 = 该行最后一次被看到的时刻（等于 t0 表示只被采到一次）
+            const ev = {
+              band: label,
+              text: line,
+              t0: Number((st.firstSeenReal ?? at / 1000).toFixed(2)),
+              t1: Number((at / 1000).toFixed(2)),
+              hits: st.hits,
+              similarity: 1,
+            }
             events.push(ev)
             onEvent?.(ev)
           }
