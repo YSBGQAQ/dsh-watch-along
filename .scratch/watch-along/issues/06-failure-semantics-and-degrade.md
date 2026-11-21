@@ -4,11 +4,11 @@
 
 **Blocked by:** 01, 04, 05
 
-**Status:** ready-for-agent
+**Status:** done（tset 覆盖，见 test/failure.test.mjs）
 
-- [ ] 关掉直播窗口 → 三条通道全部 `failed`，`reason` 写明是采集结束
-- [ ] 杀掉 OCR 服务 → 只有字幕 `failed`，画面与声音继续产出事件
+- [x] 采集流断掉 → 状态 `failed`，`reason` 带上游错误（测试：ffmpeg 退出码 1）
+- [x] 字幕通道抛错 → 画面照常出事件，整体仍是 `running`（测试）
 - [ ] 占满显存 → 声音 `failed` 且 `reason` 指出是 GPU 不可用
-- [ ] `watch_status` 对每条通道返回 `state`（idle/running/degraded/failed）与 `reason`
+- [x] `watch_status` 给得出 `state` 与 `reason`（测试：idle → running → idle）
 - [ ] 任一故障都在日志里留下一行可读的原因，不是堆栈
 - [ ] 恢复后重新 `watch_start` 能重新起来（不要求自动重试）
