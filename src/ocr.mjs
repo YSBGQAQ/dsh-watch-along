@@ -182,6 +182,29 @@ export function createSubtitleReader({
     return uni ? inter / uni : 0
   }
   const alias = new Map() // label -> [{ key, norm }]
+
+  // 每带一个帧队列（存已裁剪、已缩放的图），OCR 期间采集的帧全进这里
+  const frameQueue = new Map() // label -> [img]
+  const QUEUE_MAX = Number(process.env.WATCH_ALONG_QUEUE || 24)
+
+  function cropToImg(band, buf, width, height) {
+    const y0 = Math.max(0, Math.floor(height * (band.top ?? 0)))
+    const y1 = Math.min(height, Math.ceil(height * ((band.top ?? 0) + (band.height ?? 1))))
+    const h = y1 - y0
+    if (h <= 0) return null
+    const rgb = Buffer.alloc(width * h * 3)
+    buf.copy(rgb, 0, y0 * width * 3, y1 * width * 3)
+    return { width, height: h, rgb }
+  }
+
+  function enqueueBand(band, buf, width, height) {
+    const label = band.label ?? 'band'
+    const q = frameQueue.get(label) ?? []
+    if (q.length >= QUEUE_MAX) q.shift() // 满了丢最旧的，别无限涨
+    const img = cropToImg(band, buf, width, height)
+    if (img) q.push(img)
+    frameQueue.set(label, q)
+  }
   // 会话内重复计数：不判断"这是什么"，只看"它是不是在不停重复"。
   // 水印必然重复，台词很少重复到阈值；阈值可调，默认 5。
   const MUTE_AFTER = Number(process.env.WATCH_ALONG_MUTE_AFTER || 3)
@@ -207,8 +230,20 @@ export function createSubtitleReader({
         const y1 = Math.min(height, Math.ceil(height * ((band.top ?? 0) + (band.height ?? 1))))
         const h = y1 - y0
         if (h <= 0) return { label, lines: [], batchN: 1 }
-        const rgb = Buffer.alloc(width * h * 3)
-        buf.copy(rgb, 0, y0 * width * 3, y1 * width * 3)
+        const q = frameQueue.get(label) ?? []
+        let rgb
+        if (q.length) {
+          const cur = q.shift()                 // 用排队中的帧（OCR 期间采集的）
+          rgb = cur.rgb
+          frameQueue.set(label, q)
+          var qWidth = cur.width
+          var qHeight = cur.height
+        } else {
+          rgb = Buffer.alloc(width * h * 3)
+          buf.copy(rgb, 0, y0 * width * 3, y1 * width * 3)
+          var qWidth = width
+          var qHeight = h
+        }
         const below = Number(process.env.OCR_UPSCALE_BELOW || 1200)
         const sc = width >= below ? 1 : (band.scale ?? 1)
         const maxW = band.maxW ?? Number(process.env.OCR_MAX_WIDTH || 0)
