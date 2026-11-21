@@ -5,7 +5,7 @@
 import { createWatchService } from './src/service.mjs'
 import { createTools } from './src/tools.mjs'
 import { listWindows, lookupWindow } from './src/windows.mjs'
-import { startCapture } from './src/capture.mjs'
+import { startCapture } from './src/capture-koffi.mjs' // ADR 0005：koffi 直抓替代 ffmpeg
 import { encode } from './src/png.mjs'
 import { createPipeline } from './vendor/dsh-see-now-main/src/pipeline.js'
 import { createSubtitleReader } from './src/ocr.mjs'

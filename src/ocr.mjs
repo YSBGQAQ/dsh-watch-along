@@ -32,6 +32,24 @@ export function similarity(a, b) {
  * @param encode    ({width,height,rgb}) => Buffer      —— PNG 编码
  * @param onEvent   (event) => void                     —— 判定通过时回调
  */
+/** 最近邻整数放大：只在小窗口时用（大窗口放大没有收益，只增加耗时） */
+function upscale({ width, height, rgb, k }) {
+  const W = width * k
+  const H = height * k
+  const out = Buffer.alloc(W * H * 3)
+  for (let y = 0; y < H; y += 1) {
+    const sy = Math.floor(y / k)
+    for (let x = 0; x < W; x += 1) {
+      const s = (sy * width + Math.floor(x / k)) * 3
+      const d = (y * W + x) * 3
+      out[d] = rgb[s]
+      out[d + 1] = rgb[s + 1]
+      out[d + 2] = rgb[s + 2]
+    }
+  }
+  return { width: W, height: H, rgb: out }
+}
+
 export function createSubtitleReader({
   recognize,
   encode,
@@ -44,10 +62,11 @@ export function createSubtitleReader({
   // 三带：顶 / 中 / 底。**不猜字幕在哪**，而是把画面分三段各自识别，
   // 每条带单独出事件（band 字段标明），让 AI 自己判断哪条是字幕。
   // 参考 streamvision 的做法（三带 + 两次一致），固定比例但覆盖常见布局。
+  // 三条带**故意重叠**（streamvision 的常量）：正好压在分界线上的字不会被切断。
   bands = [
-    { top: 0, height: 0.22, label: 'top' },
-    { top: 0.22, height: 0.56, label: 'middle' },
-    { top: 0.78, height: 0.22, label: 'bottom' },
+    { top: 0, height: 0.38, label: 'top', scale: 2 },
+    { top: 0.32, height: 0.4, label: 'mid', scale: 2 },
+    { top: 0.66, height: 0.34, label: 'bottom', scale: 3 },
   ],
   // spec 要求 text ≤60 字。整幅识别会把多处文字拼成一句（实测 80–120 字），
   // 截断是"不猜位置"前提下唯一能守住的硬约束。
@@ -79,7 +98,9 @@ export function createSubtitleReader({
         if (h <= 0) continue
         const rgb = Buffer.alloc(width * h * 3)
         buf.copy(rgb, 0, y0 * width * 3, y1 * width * 3)
-        const got = (await recognize(encode({ width, height: h, rgb }))) ?? []
+        // 放大只为"字太小读不出"：带宽够大时照抄 scale 纯属浪费像素
+        const sc = width >= 1200 ? 1 : (band.scale ?? 1)
+        const got = (await recognize(encode(sc === 1 ? { width, height: h, rgb } : upscale({ width, height: h, rgb, k: sc })))) ?? []
         const joined = got.map((x) => String(x).trim()).filter(Boolean).join(' ').trim()
         const text = joined.length > maxChars ? `${joined.slice(0, maxChars - 1)}…` : joined
 

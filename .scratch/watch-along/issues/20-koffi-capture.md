@@ -6,7 +6,7 @@
 
 **Blocked by:** 04（字幕通道）、12（覆盖率验证）
 
-**Status:** ready-for-agent
+**Status:** done（待真机跑一轮确认字幕带）
 **依据:** `docs/adr/0005-koffi-capture.md`
 
 ## 为什么（实测，不是推测）
@@ -19,13 +19,13 @@
 
 ## 要做的事（按顺序）
 
-- [ ] `src/capture-koffi.mjs`：从 `.scratch/proto/native-capture.mjs` 收编，只留 `windowRect` + `capture`
-- [ ] **入口做参数类型校验**：`windowRect` 只收字符串标题（传 hwnd 会**段错误**，已踩一次，进程静默退出无报错）
-- [ ] `index.js` 换接线，删掉 `capture.mjs` 的调用
-- [ ] `src/ocr.mjs` 三带改 `top 0–0.38` / `mid 0.32–0.72` / `bottom 0.66–1.0`（**故意重叠，防切字**）
-- [ ] 门限对齐 `STABLE_MS=1200`、`SIMILAR=0.85`
-- [ ] **放大按带宽度自适应**：带宽 < 1200px 才按 2/2/3 放大，否则原尺寸
-- [ ] 窗口找不到 → **显式报错**，绝不静默退回整屏
+- [x] `src/capture-koffi.mjs`：`windowRect` + `capture` + `startCapture`（与旧接口同形）
+- [x] 入口类型校验：传非字符串立即抛 `TypeError`（不再段错误）
+- [x] `index.js` 改用 `capture-koffi.mjs`
+- [x] 三带改 0–0.38 / 0.32–0.72 / 0.66–1.0（重叠）
+- [x] 门限对齐（intervalMs 1200 / threshold 0.85）
+- [x] 放大自适应：带宽 <1200 才放大，否则原尺寸
+- [x] 找不到窗口返回 null，由调用方报错（不退回整屏）
 - [ ] 删掉 `src/capture.mjs` 或标注废弃（不再被引用）
 
 ## 验收
@@ -47,3 +47,12 @@ koffi 是 native 调用，**参数类型写错直接段错误**，不是异常�
 1. 所有调用点做类型校验
 2. 测试必须覆盖"传错类型"
 3. 首次跑用子进程隔离，避免连累主进程
+
+## 实施结果（2026-11-21）
+
+- `windowRect('反向之地')` → `{x:1228,y:0,width:2981,height:2170}`（物理像素，与 819×1.5 一致）
+- `capture()` → 2612×2160（被屏幕高度钳位）、平均亮度 **174.5**（非黑，真实画面）
+- 传数字给 `windowRect` → 立即 `TypeError`，**不再段错误**
+- 56 个测试全绿
+
+**未验**：插件里跑一轮，确认 bottom 带读到的是字幕而非书签栏（需 DSH 重启）。

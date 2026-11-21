@@ -4,7 +4,7 @@
 
 **Blocked by:** 04
 
-**Status:** 进行中（量具就绪，待用真实画面定带）
+**Status:** done（三带并入票 20，按 streamvision 常量）
 
 - [x] 量具 `python/ocr_bands.py`；三张真实画面已量
 - [x] `text` 长度 ≤ 60 字（每条带各自截断）
