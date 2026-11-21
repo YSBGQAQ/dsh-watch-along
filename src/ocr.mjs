@@ -41,6 +41,7 @@ export function createSubtitleReader({
 } = {}) {
   let lastAt = -Infinity
   let pending = null // 尚未确认的上一行
+  let emitted = null // 已经发出去的那一行：同一句不重复发
   let busy = false
 
   async function feed({ buf, width, height }) {
@@ -61,6 +62,10 @@ export function createSubtitleReader({
         pending = null
         return null
       }
+      if (text === emitted) {
+        pending = null // 还是刚才发过的那句，不重复
+        return null
+      }
       if (!pending) {
         pending = text // 第一遍：先记着，不下结论
         return null
@@ -71,7 +76,8 @@ export function createSubtitleReader({
         return null
       }
       const event = { band: 'bottom', text: pending, hits: 2, similarity: +sim.toFixed(3) }
-      pending = null // 发过就不再重复
+      emitted = pending // 记住发过什么，同一句不再发
+      pending = null
       onEvent?.(event)
       return event
     } catch (e) {
