@@ -103,3 +103,23 @@ function apply(ctx) {
 2. 写一个**最小面板**（只画环境检查八项，只读，不写设置）
 3. 重启验证：能打开、八项显示正常
 4. 再加表单与校验（逻辑层已就绪，直接绑定）
+
+## 实测反馈（2026-11-21 09:44）
+
+浏览器控制台（设置页 Ctrl+Shift+I）：
+
+```
+web boot: warning: 1 entry did not activate
+dsh-watch-along: pending (waiting for service: @deepseek-ai/dsh-client-ui-slots)
+```
+
+**含义**：client.js 被加载器读到了，但它在等 `@deepseek-ai/dsh-client-ui-slots` 这个服务，
+而该服务没有就绪 → 面板永远不激活 → 设置里看不到「陪看」。
+
+**已改**：`dsh.client.inject` 从两个补成三个（加上 `@deepseek-ai/dsh-client-locale`），
+与 basics-panel 完全一致。
+
+**下次要看**：重启后控制台那句话是否变化 ——
+- 若变成 `waiting for service: @deepseek-ai/dsh-client-locale`，说明 locale 缺，继续补
+- 若消失但仍无面板，说明服务齐了但槽位名不对（去查 basics-panel 里 `"nav"` 的用法）
+- 若报别的错，按报错原文查
