@@ -23,8 +23,22 @@ if (!title) {
   process.exit(1)
 }
 
+import fs from 'node:fs'
+import path from 'node:path'
+
+const LOG = path.resolve('.scratch', 'run', 'soak.log')
+fs.mkdirSync(path.dirname(LOG), { recursive: true })
 const stamp = () => new Date().toISOString().slice(11, 19)
-const say = (...a) => console.log(stamp(), ...a)
+const say = (...a) => {
+  const line = [stamp(), ...a].join(' ')
+  console.log(line)
+  // 同时落盘：两小时里终端可能被关掉、被滚屏冲掉，日志是唯一能回看的证据
+  try {
+    fs.appendFileSync(LOG, `${line}\n`)
+  } catch {
+    /* 日志写不进去不该影响压测 */
+  }
+}
 const mb = (n) => Math.round(n / 1024 / 1024)
 
 const service = createWatchService({
@@ -50,7 +64,7 @@ const rss = []
 const startedAt = Date.now()
 const deadline = startedAt + minutes * 60_000
 
-say(`[start] window=${title} 时长=${minutes} 分钟`)
+say(`[start] window=${title} 时长=${minutes} 分钟   日志：${LOG}`)
 const st0 = await service.start({ window: title })
 say(`[running] region=${JSON.stringify(st0.region)} size=${st0.size?.width}x${st0.size?.height}`)
 
@@ -76,10 +90,18 @@ while (Date.now() < deadline) {
   }
   cursor = got.nextId
 
-  if (Date.now() - lastReport >= 10 * 60_000) {
+  if (Date.now() - lastReport >= 60_000) {
     lastReport = Date.now()
     const s = service.status()
-    say(`[10min] frames=${s.frames} state=${s.state} 事件=${received} rss=${sample().mb ?? ''}MB`)
+    const live = rss[rss.length - 1]?.mb ?? '?'
+    say(
+      `[心跳 ${Math.round((Date.now() - startedAt) / 60_000)}min]`,
+      `frames=${s.frames}`,
+      `state=${s.state}`,
+      `事件=${received}`,
+      `空等=${timeouts}`,
+      `rss=${live}MB`,
+    )
   }
   if (service.status().state === 'failed') {
     say('[fatal] 状态变成 failed：', service.status().reason)
