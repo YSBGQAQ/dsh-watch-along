@@ -258,11 +258,11 @@ export function createSubtitleReader({
         // 攒 batch 帧，竖拼成一张再送：一次调用的固定开销摊到多帧上
         const arr = pendingBands.get(label) ?? []
         arr.push(img)
-        if (arr.length < batch) { pendingBands.set(label, arr); return { label, lines: [], batchN: 0 } }
+        if (arr.length < batch) { pendingBands.set(label, arr); return { label, lines: [], batchN: 0, once: !!band.once } }
         pendingBands.set(label, [])
         const stacked = stackVertical(arr)
         const got = (await recognize(encode(stacked))) ?? []
-        return { label, lines: got, batchN: arr.length }
+        return { label, lines: got, batchN: arr.length, once: !!band.once }
       })
       const results = await Promise.all(jobs)
 
