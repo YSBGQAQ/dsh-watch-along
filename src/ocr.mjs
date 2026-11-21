@@ -136,7 +136,7 @@ export function createSubtitleReader({
     // 默认只跑字幕带：一次识别 ≈ 一次 OCR 的耗时，周期才压得下来。
     // mid（正文）每 4 轮一次即可，需要时把注释打开。
     // { top: 0.32, height: 0.4, label: 'mid', scale: 2, every: 4 },
-    { top: 0.66, height: 0.34, label: 'bottom', scale: 3, every: 1, batch: 3 },
+    { top: 0.66, height: 0.34, label: 'bottom', scale: 3, every: 1, batch: 5 },
   ],
   // spec 要求 text ≤60 字。整幅识别会把多处文字拼成一句（实测 80–120 字），
   // 截断是"不猜位置"前提下唯一能守住的硬约束。
