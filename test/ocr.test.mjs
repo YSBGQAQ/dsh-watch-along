@@ -18,6 +18,7 @@ test('同一行要出现两次才收录，且只收录一次', async () => {
   const got = []
   let clock = 0
   const reader = createSubtitleReader({
+    bands: [{ top: 0, height: 1, label: 'bottom' }],
     encode: fakeEncode,
     recognize: async () => ['这波操作可以'],
     onEvent: (e) => got.push(e),
@@ -43,6 +44,7 @@ test('文字变了就不发，等它稳定', async () => {
   let i = 0
   let clock = 0
   const reader = createSubtitleReader({
+    bands: [{ top: 0, height: 1, label: 'bottom' }],
     encode: fakeEncode,
     recognize: async () => texts[Math.min(i++, texts.length - 1)],
     onEvent: (e) => got.push(e),
@@ -61,6 +63,7 @@ test('文字变了就不发，等它稳定', async () => {
 test('OCR 报错时不抛，只回调错误，画面通道不受影响', async () => {
   const errs = []
   const reader = createSubtitleReader({
+    bands: [{ top: 0, height: 1, label: 'bottom' }],
     encode: fakeEncode,
     recognize: async () => { throw new Error('服务没起来') },
     onEvent: (e) => errs.push(e),
@@ -76,6 +79,7 @@ test('上一次还在跑时，新帧被跳过（不排队堆积）', async () =>
   let calls = 0
   let release
   const reader = createSubtitleReader({
+    bands: [{ top: 0, height: 1, label: 'bottom' }],
     encode: fakeEncode,
     recognize: () => { calls += 1; return new Promise((r) => { release = r }) },
     onEvent: () => {},

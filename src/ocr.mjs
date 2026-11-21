@@ -41,7 +41,14 @@ export function createSubtitleReader({
   top = DEFAULT_TOP,
   // 分带识别：每条带单独裁、单独 OCR，结果按顺序拼接。
   // 默认整幅一条（行为不变）；裁哪几条**必须先用 python/ocr_bands.py 量**，别拍脑袋。
-  bands = [{ top: DEFAULT_TOP, height: 1 - DEFAULT_TOP }],
+  // 三带：顶 / 中 / 底。**不猜字幕在哪**，而是把画面分三段各自识别，
+  // 每条带单独出事件（band 字段标明），让 AI 自己判断哪条是字幕。
+  // 参考 streamvision 的做法（三带 + 两次一致），固定比例但覆盖常见布局。
+  bands = [
+    { top: 0, height: 0.22, label: 'top' },
+    { top: 0.22, height: 0.56, label: 'middle' },
+    { top: 0.78, height: 0.22, label: 'bottom' },
+  ],
   // spec 要求 text ≤60 字。整幅识别会把多处文字拼成一句（实测 80–120 字），
   // 截断是"不猜位置"前提下唯一能守住的硬约束。
   maxChars = 60,
@@ -53,14 +60,19 @@ export function createSubtitleReader({
   let emitted = null // 已经发出去的那一行：同一句不重复发
   let busy = false
 
+  // 每条带各自记住"上一次的读数"，两遍一致才发 —— 这样三条带互不干扰，
+  // 底部字幕在动、顶部标题不动，两者不会互相拖后腿。
+  const bandState = new Map()
+
   async function feed({ buf, width, height }) {
     if (busy) return null // 上一次还没回来就跳过，绝不排队堆积
     if (now() - lastAt < intervalMs) return null
     lastAt = now()
     busy = true
     try {
-      const lines = []
+      const events = []
       for (const band of bands) {
+        const label = band.label ?? 'band'
         const y0 = Math.max(0, Math.floor(height * (band.top ?? 0)))
         const y1 = Math.min(height, Math.ceil(height * ((band.top ?? 0) + (band.height ?? 1))))
         const h = y1 - y0
@@ -68,33 +80,36 @@ export function createSubtitleReader({
         const rgb = Buffer.alloc(width * h * 3)
         buf.copy(rgb, 0, y0 * width * 3, y1 * width * 3)
         const got = (await recognize(encode({ width, height: h, rgb }))) ?? []
-        lines.push(...got)
-      }
-      const joined = lines.map((s) => String(s).trim()).filter(Boolean).join(' ').trim()
-      const text = joined.length > maxChars ? `${joined.slice(0, maxChars - 1)}…` : joined
+        const joined = got.map((x) => String(x).trim()).filter(Boolean).join(' ').trim()
+        const text = joined.length > maxChars ? `${joined.slice(0, maxChars - 1)}…` : joined
 
-      if (!text || text.length < minChars) {
-        pending = null
-        return null
+        const st = bandState.get(label) ?? { pending: null, emitted: null }
+        bandState.set(label, st)
+
+        if (!text || text.length < minChars) {
+          st.pending = null
+          continue
+        }
+        if (text === st.emitted) {
+          st.pending = null // 还是刚才发过的那句
+          continue
+        }
+        if (!st.pending) {
+          st.pending = text // 第一遍：先记着
+          continue
+        }
+        const sim = similarity(st.pending, text)
+        if (sim < threshold) {
+          st.pending = text // 还在动，重新等
+          continue
+        }
+        const event = { band: label, text: st.pending, hits: 2, similarity: +sim.toFixed(3) }
+        st.emitted = st.pending
+        st.pending = null
+        events.push(event)
+        onEvent?.(event)
       }
-      if (text === emitted) {
-        pending = null // 还是刚才发过的那句，不重复
-        return null
-      }
-      if (!pending) {
-        pending = text // 第一遍：先记着，不下结论
-        return null
-      }
-      const sim = similarity(pending, text)
-      if (sim < threshold) {
-        pending = text // 变了：说明这一行还在动，重新开始等
-        return null
-      }
-      const event = { band: 'bottom', text: pending, hits: 2, similarity: +sim.toFixed(3) }
-      emitted = pending // 记住发过什么，同一句不再发
-      pending = null
-      onEvent?.(event)
-      return event
+      return events.length ? events : null
     } catch (e) {
       // OCR 挂了不能拖垮画面通道：这一拍放弃，下一拍照常
       pending = null

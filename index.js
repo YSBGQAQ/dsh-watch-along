@@ -128,7 +128,7 @@ export function apply(ctx, opts = {}) {
     onEvent: (e) => {
       if (e?.error) return log(`字幕通道：${e.error}`)
       svcRef?.emit('ocr', e)
-      log(`字幕：${e.text}`)
+      log(`字幕[${e.band}]：${e.text}`)
     },
   })
 
