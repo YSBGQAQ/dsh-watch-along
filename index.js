@@ -21,9 +21,12 @@ const ASR_PORT = 8766
 
 /** 问转写服务"刚才这几秒说了什么"。走文件没必要 —— 它只要秒数，不用图。 */
 let asrFirst = true
+let sessionStamp = null
 function listen(seconds) {
   // 第一次请求顺带让服务清空缓冲：否则上一场陪看的尾巴会串到这一场来。
-  const body = JSON.stringify({ seconds, reset: asrFirst })
+  // 第一次请求顺带让服务清空缓冲并把本轮写到独立文件（session 由 watch_start 生成）
+  if (asrFirst) SESSION = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '')
+  const body = JSON.stringify({ seconds, reset: asrFirst, session: SESSION })
   asrFirst = false
   return new Promise((resolve, reject) => {
     const req = http.request(
@@ -97,6 +100,11 @@ import { fileURLToPath } from 'node:url'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 
+// 每轮一个会话 id：落盘按会话分文件，否则重启即清空、上一轮没法回头比
+let SESSION = null
+const runFile = (name) =>
+  path.join(HERE, '.scratch', 'run', SESSION ? `${name}-${SESSION}.log` : `${name}.log`)
+
 export const name = 'dsh-watch-along'
 export const inject = ['tools']
 
@@ -133,7 +141,7 @@ export function apply(ctx, opts = {}) {
       // 发出的事件也要落盘，否则"准确率/召回率"永远只能靠抽样目测
       try {
         fs.appendFileSync(
-          path.join(HERE, '.scratch', 'run', 'ocr-events.log'),
+          runFile('ocr-events'),
           `${new Date().toISOString()}\t${e.band}\t${e.text}\n`,
         )
       } catch {
@@ -144,7 +152,7 @@ export function apply(ctx, opts = {}) {
       // 单独落文件：宿主日志读不到，这是唯一能统计"为什么少了"的地方
       try {
         fs.appendFileSync(
-          path.join(HERE, '.scratch', 'run', 'ocr-drops.log'),
+          runFile('ocr-drops'),
           `${new Date().toISOString()} ${band}\t${reason}\t${String(text).slice(0, 40)}\n`,
         )
       } catch {

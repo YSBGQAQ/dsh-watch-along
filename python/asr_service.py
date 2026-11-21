@@ -39,9 +39,10 @@ SEEN_MAX = 200     # 记住最近 200 句的归一化文本
 PREROLL_SEC = 1.5  # 每次送音频前留的前摇：只为给模型上下文，落在里面的话不交付
 MAX_SLICE_SEC = 30.0  # 单次最多送多少秒，防止长时间没调用后一次吃到巨量音频
 
-DUMP = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".scratch", "run", "asr-out.jsonl"
-)
+RUN_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".scratch", "run")
+# 每轮测试一个文件（reset 时可指定 session）。全局一个文件时，重启就清空，
+# 上一轮的结果没法回头比对 —— 实测丢过整轮 168 条。
+DUMP = os.path.join(RUN_DIR, "asr-out.jsonl")
 
 MODEL = None
 
@@ -335,7 +336,11 @@ def pull():
             "total": round(len(ACC["buf"]) / RATE, 2)}
 
 
-def reset():
+def reset(session=None):
+    global DUMP
+    if session:
+        safe = "".join(c for c in str(session) if c.isalnum() or c in "-_")
+        DUMP = os.path.join(RUN_DIR, f"asr-out-{safe}.jsonl")
     ACC["buf"] = np.zeros(0, dtype=np.float32)
     ACC["base"] = 0.0
     ACC["emitted_until"] = 0.0
@@ -374,7 +379,7 @@ class Handler(BaseHTTPRequestHandler):
             n = int(self.headers.get("Content-Length") or 0)
             req = json.loads(self.rfile.read(n) or b"{}")
             if req.get("reset"):
-                reset()
+                reset(req.get("session"))
             self._send({"ok": True, **pull()})
         except Exception as e:
             self._send({"ok": False, "error": f"{type(e).__name__}: {e}"}, 500)
