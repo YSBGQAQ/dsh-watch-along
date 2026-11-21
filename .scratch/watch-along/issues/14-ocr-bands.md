@@ -4,7 +4,7 @@
 
 **Blocked by:** 04
 
-**Status:** ready-for-agent
+**Status:** ready-for-agent（已确认要做，用户 2026-11-21）
 
 - [ ] 按**实测**位置裁（不是拍脑袋）：先看 3 张不同画面的文字分布，再定带
 - [ ] `text` 长度 ≤ 60 字
