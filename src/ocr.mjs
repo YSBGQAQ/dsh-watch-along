@@ -39,6 +39,9 @@ export function createSubtitleReader({
   intervalMs = 1500,
   threshold = 0.85,
   top = DEFAULT_TOP,
+  // 分带识别：每条带单独裁、单独 OCR，结果按顺序拼接。
+  // 默认整幅一条（行为不变）；裁哪几条**必须先用 python/ocr_bands.py 量**，别拍脑袋。
+  bands = [{ top: DEFAULT_TOP, height: 1 - DEFAULT_TOP }],
   now = Date.now,
   minChars = 2,
 } = {}) {
@@ -53,12 +56,17 @@ export function createSubtitleReader({
     lastAt = now()
     busy = true
     try {
-      const y0 = Math.max(0, Math.floor(height * top))
-      const h = height - y0
-      const rgb = Buffer.alloc(width * h * 3)
-      buf.copy(rgb, 0, y0 * width * 3, height * width * 3)
-
-      const lines = (await recognize(encode({ width, height: h, rgb }))) ?? []
+      const lines = []
+      for (const band of bands) {
+        const y0 = Math.max(0, Math.floor(height * (band.top ?? 0)))
+        const y1 = Math.min(height, Math.ceil(height * ((band.top ?? 0) + (band.height ?? 1))))
+        const h = y1 - y0
+        if (h <= 0) continue
+        const rgb = Buffer.alloc(width * h * 3)
+        buf.copy(rgb, 0, y0 * width * 3, y1 * width * 3)
+        const got = (await recognize(encode({ width, height: h, rgb }))) ?? []
+        lines.push(...got)
+      }
       const text = lines.map((s) => String(s).trim()).filter(Boolean).join(' ').trim()
 
       if (!text || text.length < minChars) {
