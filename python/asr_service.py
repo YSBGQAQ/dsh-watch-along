@@ -9,6 +9,7 @@
 """
 import ctypes
 import json
+from difflib import SequenceMatcher
 import sys
 import time
 import wave
@@ -104,6 +105,23 @@ MARGIN_SEC = 0.8   # 句尾离缓冲边缘太近的先不发，它可能还没�
 SEEN_MAX = 200     # 记住最近 200 句的归一化文本
 
 
+def _is_dup(key):
+    """模糊判重：ASR 对同一段音频每次会给出一字之差（是/式、夜戏/夜系、归翼/归位）。
+
+    精确相等挡不住这些，所以按相似度比；阈值 0.85 是"一字之差"和"两句不同话"的分界。
+    只在最近 SEEN_MAX 条里比，成本可以忽略。
+    """
+    for prev in STATE["seen"]:
+        if prev == key:
+            return True
+        # 长度差太多的直接跳过，省得算相似度
+        if abs(len(prev) - len(key)) > max(3, int(len(key) * 0.3)):
+            continue
+        if SequenceMatcher(None, prev, key).ratio() >= 0.85:
+            return True
+    return False
+
+
 def _norm(text):
     """归一化：只留字母数字与汉字，其余（标点/空白/数字写法差异）一律去掉。
 
@@ -138,8 +156,8 @@ def listen(seconds=3.0):
         key = _norm(line["text"])
         if not key:
             continue
-        if key in STATE["seen"]:
-            continue  # 已经发过这一句（按文本判，不看时间码）
+        if _is_dup(key):
+            continue  # 已经发过这一句（模糊判重，不看时间码）
         done.append({"text": line["text"], "t0": round(t0, 2), "t1": round(t1, 2)})
         STATE["seen"].append(key)
         if len(STATE["seen"]) > SEEN_MAX:
