@@ -11,11 +11,14 @@ if "%GAP%"=="" set GAP=5
 
 set ROOT=%~dp0..
 if not exist "%ROOT%\.scratch\run" mkdir "%ROOT%\.scratch\run"
-set OUT=%ROOT%/.scratch/run/ocr-loop.png
+set DIR=%ROOT%/.scratch/run/ocr
+if not exist "%DIR%" mkdir "%DIR%"
 
 set N=0
 :loop
 set /a N+=1
+REM 每帧一个文件：只留一张的话，事后没法看"什么时候变、变了什么"
+set OUT=%DIR%/f%N%.png
 ffmpeg -hide_banner -loglevel error -f gdigrab -framerate 1 -i desktop -frames:v 1 -y "%OUT%" >nul 2>&1
 if not exist "%OUT%" (
   echo [%N%] ffmpeg failed - is ffmpeg on PATH?
