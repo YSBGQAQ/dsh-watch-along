@@ -47,6 +47,7 @@ ACC = {
     "thread": None,
     "stop": False,
     "error": None,
+    "device": None,  # 当前录的是哪台设备的环回
 }
 
 
@@ -89,22 +90,53 @@ def load():
 
 
 def _capture_loop():
-    """后台线程：开一次流，一直往里灌 1/4 秒的块。"""
+    """后台线程：一直录，并且**跟着系统的默认输出设备走**。
+
+    为什么必须盯设备：用户换耳机/切 HDMI 之后，默认扬声器变了，而我们这条流
+    还挂在旧设备上 —— 表现就是"一直没字幕"，但看不出原因。所以每隔 2 秒比一次，
+    变了就重开流。
+    """
     ctypes.windll.ole32.CoInitialize(None)  # COM 是按线程的，这个线程要自己初始化
     try:
         import soundcard as sc
+    except Exception as e:
+        ACC["error"] = f"soundcard 不可用：{e}"
+        print(f"[asr] {ACC['error']}", flush=True)
+        return
 
-        spk = sc.default_speaker()
-        mic = sc.get_microphone(id=str(spk.name), include_loopback=True)
-        with mic.recorder(samplerate=RATE, channels=1) as rec:
-            print(f"[asr] 开始连续录音：{spk.name}", flush=True)
-            while not ACC["stop"]:
-                chunk = np.asarray(rec.record(numframes=RATE // 4)).reshape(-1).astype(np.float32)
-                if len(chunk):
-                    ACC["buf"] = np.concatenate([ACC["buf"], chunk])
-    except Exception as e:  # 录音挂了要让人看得见，否则表现为"一直没字幕"
-        ACC["error"] = f"{type(e).__name__}: {e}"
-        print(f"[asr] 录音线程出错：{ACC['error']}", flush=True)
+    while not ACC["stop"]:
+        try:
+            spk = sc.default_speaker()
+            mic = sc.get_microphone(id=str(spk.name), include_loopback=True)
+        except Exception as e:
+            ACC["error"] = f"{type(e).__name__}: {e}"
+            print(f"[asr] 取环回设备失败：{ACC['error']}", flush=True)
+            time.sleep(2)
+            continue
+
+        ACC["device"] = spk.name
+        ACC["error"] = None
+        print(f"[asr] 开始连续录音：{spk.name}", flush=True)
+        try:
+            with mic.recorder(samplerate=RATE, channels=1) as rec:
+                nextCheck = time.time() + 2.0
+                while not ACC["stop"]:
+                    chunk = np.asarray(rec.record(numframes=RATE // 4)).reshape(-1).astype(np.float32)
+                    if len(chunk):
+                        ACC["buf"] = np.concatenate([ACC["buf"], chunk])
+                    if time.time() >= nextCheck:
+                        nextCheck = time.time() + 2.0
+                        try:
+                            now = sc.default_speaker().name
+                        except Exception:
+                            now = ACC["device"]
+                        if now != ACC["device"]:
+                            print(f"[asr] 默认输出设备变了：{ACC['device']} → {now}，重开录音", flush=True)
+                            break  # 跳出内层 → 外层用新设备重开
+        except Exception as e:
+            ACC["error"] = f"{type(e).__name__}: {e}"
+            print(f"[asr] 录音中断：{ACC['error']}（2 秒后重试）", flush=True)
+            time.sleep(2)
 
 
 def start_capture():
@@ -233,7 +265,13 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        self._send({"ok": True, "ready": MODEL is not None, "capturing": ACC["thread"] is not None})
+        self._send({
+            "ok": True,
+            "ready": MODEL is not None,
+            "capturing": ACC["thread"] is not None,
+            "device": ACC["device"],
+            "error": ACC["error"],
+        })
 
     def do_POST(self):
         try:
