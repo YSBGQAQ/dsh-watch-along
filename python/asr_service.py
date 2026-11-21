@@ -26,7 +26,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import numpy as np
 
-MODEL_DIR = r"C:\Users\24206\Desktop\源码与作者说明\Whisper turbo"
+# 模型目录三级取值：环境变量 → 仓库内 models/whisper-turbo → 加载时报错并指出该设哪个变量。
+# 之前是硬编码绝对路径，换台机器直接崩（票 15）。
+MODEL_DIR = (
+    os.environ.get("WATCH_ALONG_WHISPER_DIR")
+    or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models", "whisper-turbo")
+)
 RATE = 16000
 KEEP_SEC = 20.0    # 缓冲只留最近 20 秒：够给上下文，又不至于每次转太久
 MARGIN_SEC = 0.8   # 句尾离缓冲边缘太近的先不发 —— 它可能还没说完
