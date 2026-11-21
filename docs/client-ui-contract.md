@@ -148,3 +148,31 @@ dsh-watch-along: pending (waiting for service: @deepseek-ai/dsh-client-ui-slots)
 
 **在此之前，设置界面这条路是堵的** —— 但插件的功能一件没少：
 工具、三条通道、手机端接口全部可用，只是没有图形设置入口。
+
+## 第二次结论（2026-11-21 09:54）：五个服务全 pending，已排除的假设
+
+补齐成 purge 的清单后，控制台变成：
+
+```
+dsh-watch-along: pending (waiting for services: @deepseek-ai/dsh-client-connection,
+  @deepseek-ai/dsh-client-runtime, @deepseek-ai/dsh-client-locale,
+  @deepseek-ai/dsh-client-ui-slots, @deepseek-ai/dsh-client-ui-settings)
+```
+
+**五个全等** = 我们的 client entry 没拿到**任何**服务作用域，不是"少一个"。
+
+与 `dsh-purge-community`（本机唯一确认跑通的同类插件）逐项比对，**四项完全一致**：
+
+| 项 | 结论 |
+|---|---|
+| `exports["./client"]` | 一致（都是 `./client.js`） |
+| 包装形态 | 一致（`window.__ModuleLoader__.load({id, factory})`） |
+| `dsh.client.inject` 清单 | 一致（照抄后 5 项全同） |
+| `cordis.patch.yml` | 一致（都只有 bundle 内条目） |
+
+差别只剩**宿主内部的客户端引导逻辑**——那份代码在 `app.asar` 里，插件侧读不到。
+
+**判断**：手写 client 这条路在当前构建上走不通，不是写法问题。
+要么用官方脚手架打包（可能有额外的构建产物标记），要么等宿主文档。
+
+**已撤**：`dsh.client` 从 package.json 移除，控制台恢复干净；`client.js` 保留待用。
