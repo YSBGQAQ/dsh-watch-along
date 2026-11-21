@@ -82,8 +82,9 @@ export function createSubtitleReader({
   // 每条带单独出事件（band 字段标明），让 AI 自己判断哪条是字幕。
   // 参考 streamvision 的做法（三带 + 两次一致），固定比例但覆盖常见布局。
   // 三条带**故意重叠**（streamvision 的常量）：正好压在分界线上的字不会被切断。
+  // 默认只跑 mid + bottom：top 是浏览器标签/书签/地址栏，实测整屏噪音、
+  // 而且每轮多花一次 OCR。需要"读页面顶部文字"时再显式打开 top。
   bands = [
-    { top: 0, height: 0.38, label: 'top', scale: 2 },
     { top: 0.32, height: 0.4, label: 'mid', scale: 2 },
     { top: 0.66, height: 0.34, label: 'bottom', scale: 3 },
   ],
