@@ -23,16 +23,18 @@ def run(path, bands=10):
         print("没检测到文字")
         return
 
-    ys = [[p[1] for p in box] for box in boxes]
-    top, bottom = min(min(y) for y in ys), max(max(y) for y in ys)
-    span = max(1.0, bottom - top)
+    # 必须按**整幅高度**归一化。用文字框的纵向范围算，会得到"每张图都有字在 0.0-0.1"的假分布
+    from PIL import Image
+
+    with Image.open(path) as im:
+        img_h = float(im.height)
 
     buckets = {}
     for box, text in zip(boxes, txts):
         if not text:
             continue
         y0 = min(p[1] for p in box)
-        rel = (y0 - top) / span
+        rel = y0 / img_h
         idx = min(bands - 1, int(rel * bands))
         buckets.setdefault(idx, []).append(text.strip())
 

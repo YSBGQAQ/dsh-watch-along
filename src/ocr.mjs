@@ -42,6 +42,9 @@ export function createSubtitleReader({
   // 分带识别：每条带单独裁、单独 OCR，结果按顺序拼接。
   // 默认整幅一条（行为不变）；裁哪几条**必须先用 python/ocr_bands.py 量**，别拍脑袋。
   bands = [{ top: DEFAULT_TOP, height: 1 - DEFAULT_TOP }],
+  // spec 要求 text ≤60 字。整幅识别会把多处文字拼成一句（实测 80–120 字），
+  // 截断是"不猜位置"前提下唯一能守住的硬约束。
+  maxChars = 60,
   now = Date.now,
   minChars = 2,
 } = {}) {
@@ -67,7 +70,8 @@ export function createSubtitleReader({
         const got = (await recognize(encode({ width, height: h, rgb }))) ?? []
         lines.push(...got)
       }
-      const text = lines.map((s) => String(s).trim()).filter(Boolean).join(' ').trim()
+      const joined = lines.map((s) => String(s).trim()).filter(Boolean).join(' ').trim()
+      const text = joined.length > maxChars ? `${joined.slice(0, maxChars - 1)}…` : joined
 
       if (!text || text.length < minChars) {
         pending = null
