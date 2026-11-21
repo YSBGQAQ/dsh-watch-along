@@ -23,6 +23,7 @@ test('同一行要出现两次才收录，且只收录一次', async () => {
     recognize: async () => ['这波操作可以'],
     onEvent: (e) => got.push(e),
     intervalMs: 0,
+    stableMs: 500, // 测试用短稳定窗（生产默认 1200）
     now: () => (clock += 1000),
   })
 
@@ -49,6 +50,7 @@ test('文字变了就不发，等它稳定', async () => {
     recognize: async () => texts[Math.min(i++, texts.length - 1)],
     onEvent: (e) => got.push(e),
     intervalMs: 0,
+    stableMs: 500, // 测试用短稳定窗（生产默认 1200）
     now: () => (clock += 1000),
   })
 

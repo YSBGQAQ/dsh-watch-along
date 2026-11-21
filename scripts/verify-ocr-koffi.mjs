@@ -33,7 +33,7 @@ async function recognize(png) {
 const reader = createSubtitleReader({
   encode,
   recognize,
-  intervalMs: 1200, // 与 streamvision 的 STABLE_MS 对齐
+  intervalMs: Number(process.env.OCR_INTERVAL_MS || 600),
   onEvent: (e) => console.log(`[${e.band}] ${e.text}  (相似 ${e.similarity})`),
 })
 

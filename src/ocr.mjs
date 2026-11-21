@@ -50,11 +50,30 @@ function upscale({ width, height, rgb, k }) {
   return { width: W, height: H, rgb: out }
 }
 
+/** UI 噪声（时间码/清晰度/倍速/网址）——照 streamvision 的 NOISE 思路 */
+const NOISE_RES = [
+  /^\d{1,2}\s*[:：]\s*\d{2}(\s*[:：]\s*\d{2})?(\s*\/\s*\d{1,2}\s*[:：]\s*\d{2}(\s*[:：]\s*\d{2})?)?$/,
+  /^\d{1,3}\s*[xX×]$/,
+  /^(HD|SD|FHD|4K|UHD|1080P|720P)$/i,
+  /^https?:\/\//i,
+  /^[\d\s.,:：;；|/\\-]+$/,
+]
+/** 水印/播放器署名：短、稳定、永远是噪音（我们场景特有，streamvision 那边没有） */
+const WATERMARK = [/bilibili/i, /Ai看剧/i, /正在看/, /未删减/, /^哔哩哔哩/]
+
+function isNoise(line) {
+  const t = line.trim()
+  if (NOISE_RES.some((re) => re.test(t))) return true
+  if (WATERMARK.some((re) => re.test(t))) return true
+  return false
+}
+
 export function createSubtitleReader({
   recognize,
   encode,
   onEvent,
   intervalMs = 1500,
+  stableMs = 1200, // 同一行要隔这么久仍被认到才发（streamvision 的 STABLE_MS）
   threshold = 0.85,
   top = DEFAULT_TOP,
   // 分带识别：每条带单独裁、单独 OCR，结果按顺序拼接。
@@ -79,12 +98,16 @@ export function createSubtitleReader({
   let emitted = null // 已经发出去的那一行：同一句不重复发
   let busy = false
 
-  // 每条带各自记住"上一次的读数"，两遍一致才发 —— 这样三条带互不干扰，
-  // 底部字幕在动、顶部标题不动，两者不会互相拖后腿。
-  const bandState = new Map()
+  // 行级稳定判定（2026-11-21 改）。
+  //
+  // 原来是"整条带 join 成一句再比相似度"——视频字幕场景下必然失效：
+  // bottom 带同时有水印（不变）和字幕（每两秒换），字幕一变整句就变，
+  // 相似度永远到不了 0.85，于是一条都发不出来（实测 20 秒 0 条）。
+  // 改成以"一行文字"为单位累计出现次数：同key 两拍以上且间隔够久才发。
+  const seen = new Map() // key -> { hits, firstAt, emitted }
 
   async function feed({ buf, width, height }) {
-    if (busy) return null // 上一次还没回来就跳过，绝不排队堆积
+    if (busy) return null
     if (now() - lastAt < intervalMs) return null
     lastAt = now()
     busy = true
@@ -98,39 +121,33 @@ export function createSubtitleReader({
         if (h <= 0) continue
         const rgb = Buffer.alloc(width * h * 3)
         buf.copy(rgb, 0, y0 * width * 3, y1 * width * 3)
+
         // 放大只为"字太小读不出"：带宽够大时照抄 scale 纯属浪费像素
-        // 阈值可调：小窗口才放大；OCR_UPSCALE_BELOW 用来强制走放大路径做验证
         const below = Number(process.env.OCR_UPSCALE_BELOW || 1200)
         const sc = width >= below ? 1 : (band.scale ?? 1)
         const got = (await recognize(encode(sc === 1 ? { width, height: h, rgb } : upscale({ width, height: h, rgb, k: sc })))) ?? []
-        const joined = got.map((x) => String(x).trim()).filter(Boolean).join(' ').trim()
-        const text = joined.length > maxChars ? `${joined.slice(0, maxChars - 1)}…` : joined
 
-        const st = bandState.get(label) ?? { pending: null, emitted: null }
-        bandState.set(label, st)
-
-        if (!text || text.length < minChars) {
-          st.pending = null
-          continue
+        const at = now()
+        for (const raw of got) {
+          const line = String(raw).trim()
+          if (line.length < minChars) continue
+          if (isNoise(line)) continue
+          const key = `${label}|${line.replace(/[^\p{L}\p{N}]/gu, '')}`
+          const st = seen.get(key) ?? { hits: 0, firstAt: at, emitted: false }
+          st.hits += 1
+          if (!st.emitted && st.hits >= 2 && at - st.firstAt >= stableMs) {
+            st.emitted = true
+            const ev = { band: label, text: line, hits: st.hits, similarity: 1 }
+            events.push(ev)
+            onEvent?.(ev)
+          }
+          seen.set(key, st)
         }
-        if (text === st.emitted) {
-          st.pending = null // 还是刚才发过的那句
-          continue
-        }
-        if (!st.pending) {
-          st.pending = text // 第一遍：先记着
-          continue
-        }
-        const sim = similarity(st.pending, text)
-        if (sim < threshold) {
-          st.pending = text // 还在动，重新等
-          continue
-        }
-        const event = { band: label, text: st.pending, hits: 2, similarity: +sim.toFixed(3) }
-        st.emitted = st.pending
-        st.pending = null
-        events.push(event)
-        onEvent?.(event)
+      }
+      // 清掉太久没出现的，避免长跑无限增长
+      if (seen.size > 400) {
+        const cut = now() - 60_000
+        for (const [k, v] of seen) if (v.firstAt < cut && v.emitted) seen.delete(k)
       }
       return events.length ? events : null
     } catch (e) {
