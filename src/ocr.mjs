@@ -73,9 +73,10 @@ const WATERMARK = [
 
 function isNoise(line) {
   const t = line.trim()
-  if (NOISE_RES.some((re) => re.test(t))) return true
-  if (WATERMARK.some((re) => re.test(t))) return true
-  return false
+  // 词表已关闭（2026-11-21 用户决定）：只保留"绝不可能是台词"的纯格式规则，
+  // 其余交给"重复计数自动静音"。词表追不上 OCR 的变体（bilibili→LiliLili），
+  // 而且会误杀 OK / Go 这类真台词。
+  return NOISE_RES.some((re) => re.test(t))
 }
 
 export function createSubtitleReader({
@@ -116,6 +117,12 @@ export function createSubtitleReader({
   // 相似度永远到不了 0.85，于是一条都发不出来（实测 20 秒 0 条）。
   // 改成以"一行文字"为单位累计出现次数：同key 两拍以上且间隔够久才发。
   const seen = new Map() // key -> { hits, firstAt, emitted }
+  // 会话内重复计数：不判断"这是什么"，只看"它是不是在不停重复"。
+  // 水印必然重复，台词很少重复到阈值；阈值可调，默认 5。
+  const MUTE_AFTER = Number(process.env.WATCH_ALONG_MUTE_AFTER || 5)
+  const counts = new Map() // 归一化文本 -> 次数
+  const muted = new Map()  // 归一化文本 -> 次数（已静音，仍在记）
+  const normKey = (t) => t.replace(/[^\p{L}\p{N}]/gu, '').toLowerCase()
 
   async function feed({ buf, width, height }) {
     if (busy) return null
@@ -148,6 +155,16 @@ export function createSubtitleReader({
           st.hits += 1
           if (!st.emitted && st.hits >= 2 && at - st.firstAt >= stableMs) {
             st.emitted = true
+            // 短、无标点、反复出现 → 静音（仍计数，/status 可查）
+            const nk = normKey(line)
+            const n = (counts.get(nk) ?? 0) + 1
+            counts.set(nk, n)
+            if (n > MUTE_AFTER && line.length <= 8 && !/[。？！，；、]/.test(line)) {
+              muted.set(nk, n)
+              seen.set(key, st)
+              continue
+            }
+            if (muted.has(nk)) { seen.set(key, st); continue }
             const ev = { band: label, text: line, hits: st.hits, similarity: 1 }
             events.push(ev)
             onEvent?.(ev)
