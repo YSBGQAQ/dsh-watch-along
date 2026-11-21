@@ -55,6 +55,7 @@ export function createWatchService({
   encode, // (frame:{width,height,rgb}) => Buffer
   createPipeline = null, // () => { push, take, flushNow, drainChanges }
   subtitle = null, // { feed({buf,width,height}) } —— 字幕通道，缺省不启
+  speech = null, // { start(), stop() } —— 声音通道，缺省不启
   queue = null,
   spikeThreshold = 0,
   size = DEFAULT_SIZE,
@@ -95,6 +96,7 @@ export function createWatchService({
   }
 
   async function stop() {
+    speech?.stop?.()
     try {
       capture?.stop?.()
     } catch {
@@ -205,6 +207,7 @@ export function createWatchService({
     startedAt = now()
     state = 'running'
     reason = null
+    speech?.start?.()
     return status()
   }
 

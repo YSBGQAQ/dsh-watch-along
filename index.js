@@ -9,11 +9,38 @@ import { startCapture } from './src/capture.mjs'
 import { encode } from './src/png.mjs'
 import { createPipeline } from './vendor/dsh-see-now-main/src/pipeline.js'
 import { createSubtitleReader } from './src/ocr.mjs'
+import { createSpeechReader } from './src/speech.mjs'
 import { defineToolCompat } from './vendor/dsh-see-now-main/src/define-tool.js'
 import http from 'node:http'
 import os from 'node:os'
 
 const OCR_PORT = 8765
+const ASR_PORT = 8766
+
+/** 问转写服务"刚才这几秒说了什么"。走文件没必要 —— 它只要秒数，不用图。 */
+function listen(seconds) {
+  const body = JSON.stringify({ seconds })
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      { host: '127.0.0.1', port: ASR_PORT, path: '/listen', method: 'POST', timeout: 30000,
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } },
+      (res) => {
+        let data = ''
+        res.on('data', (c) => { data += c })
+        res.on('end', () => {
+          try {
+            const j = JSON.parse(data)
+            if (!j.ok) return reject(new Error(j.error || '转写失败'))
+            resolve({ lines: j.lines || [] })
+          } catch (e) { reject(e) }
+        })
+      },
+    )
+    req.on('error', (e) => reject(new Error(`转写服务没响应（127.0.0.1:${ASR_PORT}）：${e.code || e.message}`)))
+    req.on('timeout', () => req.destroy(new Error('转写超时')))
+    req.end(body)
+  })
+}
 
 /**
  * 把裁好的 PNG 交给常驻 OCR 服务。
@@ -93,12 +120,23 @@ export function apply(ctx) {
     },
   })
 
+  const speech = createSpeechReader({
+    listen,
+    windowSec: 6,
+    onEvent: (e) => {
+      if (e?.error) return log(`声音通道：${e.error}`)
+      svcRef?.emit('speech', e)
+      log(`声音：${e.text}`)
+    },
+  })
+
   const service = createWatchService({
     listWindows,
     lookupWindow,
     startCapture,
     encode,
     subtitle,
+    speech,
     // 判据、档位、拼图全部来自参考库；打开 changeLog 才有"每张图一条变化摘要"可读。
     createPipeline: () =>
       createPipeline({ width: 798, height: 450, fps: 8, changeLog: true, changeLogMax: 500 }),
