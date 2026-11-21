@@ -208,8 +208,10 @@ def _looks_hallucinated(text):
         if p in low:
             return True
     core = _norm(t)
-    if len(core) < 2:
+    if not core:
         return True
+    # 注意：**不要**因为"字数少"就丢。真实台词里大量"走""别动""嗯"这类两三字短句，
+    # 上一版按 <2 字丢弃，实测把 45 条真实台词吃掉了（覆盖率因此卡在 63%）。
     if len(core) >= 4 and len(set(core)) / len(core) < 0.34:
         return True
     return False
