@@ -1,0 +1,46 @@
+2026-11-21T00:05:23.312Z [start] window=看视频插件三件套-原理解析.43436083351 region={"x":1268,"y":117,"width":1295,"height":757,"hwnd":1381812,"dpiScale":1.5} size={"width":798,"height":450} fps=8 span=30s step=7s
+(node:41568) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+2026-11-21T00:05:24.384Z +0.5s text lines=18 ocr=518ms
+2026-11-21T00:05:30.907Z +7.1s text lines=23 ocr=525ms pxMaxΔ=255 moved=15.747%
+2026-11-21T00:05:37.864Z +14.0s text lines=27 ocr=506ms pxMaxΔ=255 moved=69.209%
+2026-11-21T00:05:37.877Z +14.6s motion #1 strength=high where=50%,55% peak=64.4 cells=4 cut=true
+2026-11-21T00:05:44.847Z +21.0s text lines=25 ocr=485ms pxMaxΔ=255 moved=24.081%
+2026-11-21T00:05:51.880Z +28.1s text lines=26 ocr=514ms pxMaxΔ=255 moved=25.142%
+2026-11-21T00:05:58.310Z [text-diff] 1s→7s changed=16
+2026-11-21T00:05:58.311Z   edit band=1 wbs.  →  wbs.
+2026-11-21T00:05:58.311Z   edit band=1 �� �� �� �� ��  →  �� 0 һ n ' �R 0 һ c r i nt ^ 0 �R ont -01
+2026-11-21T00:05:58.311Z   edit band=2 �� �� ˢ  →  �� �� �� ˢ
+2026-11-21T00:05:58.311Z   edit band=2 �� �� ״ / �� �� �� ֡ �� ��  →  �� �� �� / �� ��
+2026-11-21T00:05:58.311Z   edit band=3 �� AI �� �� Ƶ �� �� �� �� �� �� ��  →  �� �� �� �� ʼ �� agent �� �� ��
+2026-11-21T00:05:58.312Z   edit band=4 �� �� " ��  →  �� �� " ��
+2026-11-21T00:05:58.312Z   edit band=4 �� ֪ ��  →  �� ֪ ��
+2026-11-21T00:05:58.312Z   edit band=6 ¼ �� ��  →  E ¼ �� ��
+2026-11-21T00:05:58.312Z [text-diff] 7s→14s changed=30
+2026-11-21T00:05:58.312Z   edit band=1 �� 0 һ n ' �R 0 һ c r i nt ^ 0 �R ont -01  →  904z (start) window=...
+2026-11-21T00:05:58.313Z   edit band=1 wbs.  →  wbs.md
+2026-11-21T00:05:58.313Z   gone band=1 - �� �� �� �� ��
+2026-11-21T00:05:58.313Z   gone band=1 - 1 0 R Y 8 R 0
+2026-11-21T00:05:58.313Z   edit band=2 �� �� �� ˢ  →  moved=lex Ҳ �� �� �� Ƶ �� �� �� �� �� �� �� ˢ
+2026-11-21T00:05:58.313Z   gone band=2 - �� �� �� / �� ��
+2026-11-21T00:05:58.313Z   edit band=3 vents. mj s �� �� Ƶ �� �� �� �� �� һ ԭ  →  �� �� ��
+2026-11-21T00:05:58.313Z   edit band=3 �� �� �� �� ʼ �� agent �� �� ��  →  �� WBS
+2026-11-21T00:05:58.314Z [text-diff] 14s→21s changed=13
+2026-11-21T00:05:58.314Z   gone band=1 - :e node scripts/probe 3C)s-events
+2026-11-21T00:05:58.314Z   gone band=1 - 904z (start) window=...
+2026-11-21T00:05:58.314Z   edit band=1 .mls  →  wbs.md
+2026-11-21T00:05:58.314Z   gone band=1 - wbs.md
+2026-11-21T00:05:58.314Z   gone band=2 - moved=lex Ҳ �� �� �� Ƶ �� �� �� �� �� �� �� ˢ
+2026-11-21T00:05:58.315Z   edit band=3 �� WBS  →  �� WBS
+2026-11-21T00:05:58.315Z   edit band=4 �� ֪ �� �� �� / �� �� δ �� ֤ �� �� ��  →  �� ֪ �� �� �� / �� �� δ �� ֤ �� �� ��
+2026-11-21T00:05:58.315Z   edit band=4 �� �� λ �� �� �� �� ʾ �� �� �� �� cmd �� �� �� �� �� " ��  →  vents. m i �� ѵ � �� �� �� �� һ
+2026-11-21T00:05:58.316Z [text-diff] 21s→28s changed=21
+2026-11-21T00:05:58.316Z   edit band=1 0  →  0
+2026-11-21T00:05:58.316Z   edit band=3 vents. mj s �� �� Ƶ �� �� �� �� �� һ ԭ  →  �� WBS
+2026-11-21T00:05:58.316Z   gone band=3 - 1
+2026-11-21T00:05:58.316Z   gone band=3 - �� WBS
+2026-11-21T00:05:58.316Z   edit band=4 vents. m i �� ѵ � �� �� �� �� һ  →  �� �� �� �� �� �� �� �� Ϊ �� ¼ �� Ƶ �� �� ʵ �� ¼ �� ��
+2026-11-21T00:05:58.317Z   gone band=4 - �� �� " ��
+2026-11-21T00:05:58.317Z   edit band=6 ¼ �� ��  →  �� ��
+2026-11-21T00:05:58.317Z   edit band=6 �� ��  →  �� �� �� Ŀ
+2026-11-21T00:05:58.317Z [summary] elapsed=35.0s frames=276 state=running motion=1 textChanges=80 snaps=5 lastLines=26

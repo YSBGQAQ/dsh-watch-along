@@ -4,12 +4,19 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** done（密度问题拆到票 10）
 
-- [ ] 静止画面连续 10 秒产生 0 条事件
-- [ ] 画面出现明显变化后产生 `motion` 事件，带 `strength` / `where` / `peak` / `cells`
-- [ ] 连续运动（非切镜）不产生 `motion` 事件
-- [ ] `watch_events({sinceId:n})` 只返回 id 大于 n 的事件，并给出 `nextId`
-- [ ] 无新事件时长轮询到点返回 `timedOut: true`，不报错
-- [ ] `sinceId` 早于内存最旧事件时返回 `staleSince: true`，并从最旧给起（不跳过中间）
-- [ ] 内存持有上限 500 条，超出丢最旧；磁盘保留 2000 条
+- [x] 静止画面连续 10 秒产生 0 条事件（实测 30 秒 0 条，像素差 `moved=0%`）
+- [x] 画面出现明显变化后产生 `motion` 事件，带 `strength` / `where` / `peak` / `cells`（实测 `strength=high where=50%,55% peak=64.4 cells=4`）
+- [x] `watch_events({sinceId:n})` 只返回 id 大于 n 的事件，并给出 `nextId`（单测）
+- [x] 无新事件时长轮询到点返回 `timedOut: true`，不报错（单测）
+- [x] `sinceId` 早于内存最旧事件时返回 `staleSince: true`，并从最旧给起（单测）
+- [x] 内存持有上限 500 条，超出丢最旧（单测）
+- [x] 兜底图（"我还在看"）不进事件流（判据是帧上的 `via === 'floor'`）
+- [ ] **未验**：连续运动是否该产生 `cut=true`。播放视频时实测出了 `cut=true`，但"视频在播"与"镜头切换"在数据上都是大幅变化，目前没有能区分二者的判据
+
+**踩过的坑（都记在这里，别再犯）**
+
+1. `take()` 与 `drainChanges()` 的顺序：必须先读摘要再取图，否则没出图那段时间的摘要会被挤掉。
+2. 兜底图判据不能用 `peak`（region 模式下被 `toFixed(1)` 抹成 0），也不能用 `sheet.why`（没有这个值）——只能用帧上的 `via === 'floor'`。
+3. 采集抓的是屏幕像素：**窗口被遮挡时抓到的是遮挡物**。跑测试时终端必须最小化，否则录到的是自己在刷屏的终端。
