@@ -79,6 +79,22 @@ function isNoise(line) {
   return NOISE_RES.some((re) => re.test(t))
 }
 
+/** 竖排拼图（中间留黑带，防上下行粘连） */
+function stackVertical(imgs) {
+  const W = imgs[0].width
+  const gap = 24
+  const H = imgs.reduce((a, i) => a + i.height, 0) + gap * (imgs.length - 1)
+  const out = Buffer.alloc(W * H * 3)
+  let y = 0
+  for (const img of imgs) {
+    for (let row = 0; row < img.height; row += 1) {
+      img.rgb.copy(out, ((y + row) * W) * 3, row * img.width * 3, (row + 1) * img.width * 3)
+    }
+    y += img.height + gap
+  }
+  return { width: W, height: H, rgb: out }
+}
+
 function downscale({ width, height, rgb }, maxW) {
   const k = maxW / width
   const W = maxW
@@ -120,7 +136,7 @@ export function createSubtitleReader({
     // 默认只跑字幕带：一次识别 ≈ 一次 OCR 的耗时，周期才压得下来。
     // mid（正文）每 4 轮一次即可，需要时把注释打开。
     // { top: 0.32, height: 0.4, label: 'mid', scale: 2, every: 4 },
-    { top: 0.66, height: 0.34, label: 'bottom', scale: 3, every: 1, maxW: 1100 },
+    { top: 0.66, height: 0.34, label: 'bottom', scale: 3, every: 1, maxW: 1100, batch: 3 },
   ],
   // spec 要求 text ≤60 字。整幅识别会把多处文字拼成一句（实测 80–120 字），
   // 截断是"不猜位置"前提下唯一能守住的硬约束。
@@ -140,6 +156,7 @@ export function createSubtitleReader({
   // 相似度永远到不了 0.85，于是一条都发不出来（实测 20 秒 0 条）。
   // 改成以"一行文字"为单位累计出现次数：同key 两拍以上且间隔够久才发。
   let round = 0
+  const pendingBands = new Map() // label -> 待拼的图（batch>1 时攒够再送）
   const seen = new Map() // key -> { hits, firstAt, emitted }
   // 会话内重复计数：不判断"这是什么"，只看"它是不是在不停重复"。
   // 水印必然重复，台词很少重复到阈值；阈值可调，默认 5。
@@ -160,32 +177,43 @@ export function createSubtitleReader({
       // 周期被拉长，字幕存续期内凑不齐两拍 → 只出水印、不出台词。
       round += 1
       const jobs = bands.map(async (band) => {
-        if ((band.every ?? 1) > 1 && round % (band.every ?? 1) !== 0) return { label: band.label, lines: [] }
+        if ((band.every ?? 1) > 1 && round % (band.every ?? 1) !== 0) return { label: band.label, lines: [], batchN: 1 }
         const label = band.label ?? 'band'
         const y0 = Math.max(0, Math.floor(height * (band.top ?? 0)))
         const y1 = Math.min(height, Math.ceil(height * ((band.top ?? 0) + (band.height ?? 1))))
         const h = y1 - y0
-        if (h <= 0) return { label, lines: [] }
+        if (h <= 0) return { label, lines: [], batchN: 1 }
         const rgb = Buffer.alloc(width * h * 3)
         buf.copy(rgb, 0, y0 * width * 3, y1 * width * 3)
         const below = Number(process.env.OCR_UPSCALE_BELOW || 1200)
         const sc = width >= below ? 1 : (band.scale ?? 1)
-        // 送图尺寸封顶：OCR 耗时基本随像素线性增长，1688 宽没必要全送
         const maxW = band.maxW ?? Number(process.env.OCR_MAX_WIDTH || 0)
         let img = sc === 1 ? { width, height: h, rgb } : upscale({ width, height: h, rgb, k: sc })
         if (maxW && img.width > maxW) img = downscale(img, maxW)
-        const got = (await recognize(encode(img))) ?? []
-        return { label, lines: got }
+
+        const batch = Math.max(1, band.batch ?? 1)
+        if (batch === 1) {
+          const got = (await recognize(encode(img))) ?? []
+          return { label, lines: got, batchN: 1 }
+        }
+        // 攒 batch 帧，竖拼成一张再送：一次调用的固定开销摊到多帧上
+        const arr = pendingBands.get(label) ?? []
+        arr.push(img)
+        if (arr.length < batch) { pendingBands.set(label, arr); return { label, lines: [], batchN: 0 } }
+        pendingBands.set(label, [])
+        const stacked = stackVertical(arr)
+        const got = (await recognize(encode(stacked))) ?? []
+        return { label, lines: got, batchN: arr.length }
       })
       const results = await Promise.all(jobs)
 
-      for (const { label, lines } of results) {
+      for (const { label, lines, batchN } of results) {
         for (const raw of lines) {
           const line = String(raw).trim()
           if (line.length < minChars) { onDrop?.('too-short', line, label); continue }
           if (isNoise(line)) { onDrop?.('noise-format', line, label); continue }
           const key = `${label}|${line.replace(/[^\p{L}\p{N}]/gu, '')}`
-          const st = seen.get(key) ?? { hits: 0, firstAt: at, emitted: false }
+          const st = seen.get(key) ?? { hits: 0, firstAt: at - Math.max(0, batchN ?? 1) * intervalMs, emitted: false }
           st.hits += 1
           if (!st.emitted && st.hits >= 2 && at - st.firstAt >= stableMs) {
             st.emitted = true
