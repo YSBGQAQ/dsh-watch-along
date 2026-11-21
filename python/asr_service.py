@@ -301,8 +301,11 @@ def pull():
             ACC["seen"] = ACC["seen"][-SEEN_MAX:]
         ACC["emitted_until"] = max(ACC["emitted_until"], t1)
 
-    # 没交付任何句子时也要把 cursor 往前推，否则下次还会重转同一段（那就是老问题）
-    if not done and end_abs - ACC["emitted_until"] > 6.0:
+    # 只有"这一拍压根没有句子"时才推进游标。
+    # 若模型给了句子但都因"尾巴还没说完"被跳过，**绝不能推进** ——
+    # 推进就等于把那句话永久丢掉（实测丢过"不可怕"这种真实台词）。
+    hadSegments = len(res["lines"]) > 0
+    if not done and not hadSegments and end_abs - ACC["emitted_until"] > 6.0:
         # 调试开关：把"没交付"的这段音频存下来。事后听一遍就能分清
         # 是"真没台词"、"被 VAD 滤掉"、还是"被跳过" —— 否则三者表现完全一样。
         if os.environ.get("WATCH_ALONG_DUMP_GAPS"):
