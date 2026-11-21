@@ -95,57 +95,56 @@ def transcribe(audio, rate=16000):
 
 
 RATE = 16000
-# 连续累积的音频与"已经发出去到哪儿"。不按固定窗口切，是为了不把一句话切两半。
-STATE = {"audio": np.zeros(0, dtype=np.float32), "emitted": 0.0}
-KEEP_SEC = 30.0     # 缓冲只留最近 30 秒，避免越攒越大
-MARGIN_SEC = 0.8    # 句尾离缓冲区边缘不到 0.8 秒的，先不发 —— 它可能还没说完
+# 连续累积的音频 + 已经交付过的句子（按时间码去重）。
+# 关键：每次都转**整个缓冲**，不截尾巴 —— 从句子中间开始转会丢上下文，
+# Whisper 会吐出"不分有"这种碎片（实测过，别改回去）。
+STATE = {"audio": np.zeros(0, dtype=np.float32), "delivered": []}
+KEEP_SEC = 20.0    # 留最近 20 秒：够给上下文，又不至于每次转太久
+MARGIN_SEC = 0.8   # 句尾离缓冲边缘太近的先不发，它可能还没说完
+DUP_SEC = 0.35     # 起点差这么多就当同一句，避免重复交付
 
 
 def listen(seconds=3.0):
-    """录一小段、追加到缓冲，只返回"已经说完"的句子。
-
-    为什么不是每段独立转写：固定窗口会把一句话从中间切开，
-    转出来是"还从这里开始我会"这种碎片（实测）。改成从上次发出的位置重新转，
-    并且只交尾部留有 MARGIN_SEC 余量的句子 —— 这样切点永远落在句子之间。
-    """
+    """录一小段、追加到缓冲，整段转写，只交付"已经说完且没发过"的句子。"""
     global STATE
     chunk = record(seconds)
     if len(chunk):
         STATE["audio"] = np.concatenate([STATE["audio"], chunk])
+
     buf = STATE["audio"]
     total = len(buf) / RATE
-    start = STATE["emitted"]
-
-    if total - start < 0.5:
+    if total < 1.0:
         return {"lines": [], "ms": 0, "silent": True, "rms": 0.0, "total": round(total, 2)}
 
-    tail = buf[int(start * RATE):]
-    rms = float(np.sqrt(np.mean(tail**2))) if len(tail) else 0.0
+    rms = float(np.sqrt(np.mean(buf**2)))
     if rms < 0.001:
         return {"lines": [], "ms": 0, "silent": True, "rms": round(rms, 5), "total": round(total, 2)}
 
-    res = transcribe(tail)
+    res = transcribe(buf)
     done = []
     for line in res["lines"]:
-        abs_t1 = start + line["t1"]
-        if abs_t1 > total - MARGIN_SEC:
-            continue  # 尾巴还没说完，等下一拍
-        done.append({"text": line["text"], "t0": round(start + line["t0"], 2), "t1": round(abs_t1, 2)})
-    if done:
-        STATE["emitted"] = done[-1]["t1"]
+        t0, t1 = float(line["t0"]), float(line["t1"])
+        if t1 > total - MARGIN_SEC:
+            continue  # 尾巴还没说完，下一拍再说
+        if any(abs(t0 - d0) < DUP_SEC and abs(t1 - d1) < DUP_SEC for d0, d1 in STATE["delivered"]):
+            continue  # 已经发过这一句
+        done.append({"text": line["text"], "t0": round(t0, 2), "t1": round(t1, 2)})
+        STATE["delivered"].append((t0, t1))
 
-    # 缓冲裁剪：留最近 KEEP_SEC 秒，同时把 emitted 基准一起平移
+    # 裁剪缓冲：所有时间码一起往前平移，否则下次算出来的位置全错
     if total > KEEP_SEC:
-        drop = int((total - KEEP_SEC) * RATE)
-        STATE["audio"] = buf[drop:]
-        STATE["emitted"] = max(0.0, STATE["emitted"] - (total - KEEP_SEC))
+        drop = total - KEEP_SEC
+        STATE["audio"] = buf[int(drop * RATE):]
+        STATE["delivered"] = [(max(0.0, d0 - drop), max(0.0, d1 - drop)) for d0, d1 in STATE["delivered"]]
+        STATE["delivered"] = [x for x in STATE["delivered"] if x[1] > 0.05]
+        total = KEEP_SEC
 
     return {"lines": done, "ms": res["ms"], "silent": False, "rms": round(rms, 5), "total": round(total, 2)}
 
 
 def reset():
     global STATE
-    STATE = {"audio": np.zeros(0, dtype=np.float32), "emitted": 0.0}
+    STATE = {"audio": np.zeros(0, dtype=np.float32), "delivered": []}
 
 
 class Handler(BaseHTTPRequestHandler):
