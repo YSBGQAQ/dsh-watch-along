@@ -141,7 +141,7 @@ window.__ModuleLoader__.load({
           '每次主动开口时发给模型的指令。{n} 会自动替换成「主动说话间隔」的秒数'),
         row('observeSec', '静默观察间隔',
           h('input', { type: 'number', min: 0, max: 120, step: 1, style: Object.assign({}, fieldStyle, { width: 90 }), value: val.observeSec, onChange: (e) => edit('observeSec', Number(e.target.value)) }),
-          '每隔几秒叫醒它一次：把刚过去这一段的字幕/声音/画面变化交给它，让它回一句"现在是什么情况"。它不跟你说话，只是保持对剧情的理解，你随时开口它不用重新听一遍。0 = 关掉（最省，但画面卡住这类事没人发现）。默认 6 秒'),
+          '每隔几秒叫醒它一次：把刚过去这一段的字幕/声音/画面变化交给它，回一句"现在是什么情况"。它不跟你说话，只保持对剧情的理解。0 = 关掉。默认 6 秒；填得更小不会更快——实际节流不低于 6 秒，再小只会让消息排队'),
         row('wakeGapSec', '主动说话间隔',
           h('input', { type: 'number', min: 0, max: 300, step: 5, style: Object.assign({}, fieldStyle, { width: 90 }), value: val.wakeGapSec, onChange: (e) => edit('wakeGapSec', Number(e.target.value)) }),
           '秒；0–300。填 0 = 不说话，只采集不主动开口；间隔越短越费 token'),
