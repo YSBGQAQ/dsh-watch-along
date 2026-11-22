@@ -28,7 +28,20 @@ export function createEventQueue({ capacity = 500, now = Date.now, startedAt = n
     let from
 
     if (sinceId == null) {
-      from = oldest
+      // 首次读（不给 sinceId）= "现在有什么" → 取**最近**的 limit 条。
+      // 原来是 from = oldest（最旧的 limit 条），长会话里会返回几十分钟前的事件，
+      // 于是"刚才说了什么"答不上来 —— 这不是上下文缺失，是取错了那一段。
+      const tail = items.slice(-Math.max(1, limit))
+      const lastId = tail.length ? tail[tail.length - 1].id : highWater
+      return {
+        events: tail,
+        nextId: Math.min(lastId, highWater) || highWater,
+        pending: 0,
+        staleSince: false,
+        highWater,
+        dropped,
+        quiet: tail.length === 0,
+      }
     } else {
       from = sinceId + 1
       if (sinceId < oldest - 1) {
@@ -53,13 +66,17 @@ export function createEventQueue({ capacity = 500, now = Date.now, startedAt = n
     }
   }
 
-  /** 长轮询：等到有事件或超时。超时不是错误。 */
+  /** 长轮询：等到**新**事件或超时。超时不是错误。 */
   async function wait({
     sinceId = null,
     waitMs = 30_000,
     pollMs = 200,
     limit = 100,
   } = {}) {
+    // 不给 sinceId 的"长轮询"语义是"从现在开始等新的"，
+    // 所以起点落在 highWater（此刻），而不是回头去捞历史 ——
+    // 否则 read(null) 现在返回最近一批，长轮询会立刻返回、根本不等待。
+    if (sinceId == null) sinceId = highWater
     const deadline = now() + waitMs
     for (;;) {
       const got = read({ sinceId, limit })

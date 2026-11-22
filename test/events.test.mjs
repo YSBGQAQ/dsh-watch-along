@@ -76,3 +76,23 @@ test('长轮询：有事件立刻返回，没事件到点返回 timedOut 而不�
   assert.equal(got.events.length, 1)
   assert.equal(got.events[0].kind, 'speech')
 })
+
+// ── "刚才"的语义：不给 sinceId 要拿**最近**的，不是最旧的 ─────────────
+test('首次读返回最近的 limit 条（不是最旧的）', () => {
+  const q = createEventQueue({ capacity: 500 })
+  for (let i = 0; i < 30; i++) q.add('motion', { i })
+  const r = q.read({ limit: 5 })
+  assert.equal(r.events.length, 5)
+  assert.deepEqual(r.events.map((e) => e.i), [25, 26, 27, 28, 29], '拿到的是最旧的那批')
+  assert.equal(r.pending, 0)
+})
+
+test('长轮询不给 sinceId = 从此刻开始等新的，不会立刻返回历史', async () => {
+  const q = createEventQueue({ capacity: 500 })
+  q.add('motion', { i: 1 })
+  const t0 = Date.now()
+  const r = await q.wait({ waitMs: 300, pollMs: 50 })
+  assert.equal(r.timedOut, true, '不该捞到旧事件')
+  assert.equal(r.events.length, 0)
+  assert.ok(Date.now() - t0 >= 250)
+})

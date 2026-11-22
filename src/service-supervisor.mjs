@@ -161,7 +161,19 @@ export function createSupervisor({
     return { id: which, pid: child.pid ?? null, port }
   }
 
+  // 同一时刻只允许一次启动：面板 2 秒一轮询、用户还可能连点两下，
+  // 两个 start() 同时看到"没起来"就会各拉一份，最后四个进程抢两个端口。
+  let startInFlight = null
+
   async function start() {
+    if (startInFlight) return startInFlight
+    startInFlight = startOnce().finally(() => {
+      startInFlight = null
+    })
+    return startInFlight
+  }
+
+  async function startOnce() {
     if (!cfg.ready) {
       return { ok: false, error: `还缺配置：${cfg.missing.join('；')}`, started: [] }
     }

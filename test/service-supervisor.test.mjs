@@ -150,3 +150,19 @@ test('面板接口的 CORS 头要允许 content-type（否则 POST /settings 变
     server.close()
   }
 })
+
+test('并发调用 start 只会拉起一份（面板轮询 + 用户连点也不能起重复进程）', async () => {
+  let launched = 0
+  const sup = createSupervisor({
+    config: { ready: true, missing: [], ports: { ocr: 1, asr: 2, panel: 3 }, rootDir: '/r', python: 'p', whisperDir: 'w' },
+    fetchImpl: async () => ({ ok: false, status: 502 }), // 两个都探不到 → 都想启动
+    spawnImpl: () => {
+      launched += 1
+      return { pid: 1, unref() {} }
+    },
+  })
+  const [a, b, c] = await Promise.all([sup.start(), sup.start(), sup.start()])
+  assert.equal(launched, 2, `起了 ${launched} 个进程（应为 2：ocr + asr 各一个）`)
+  assert.equal(a.ok && b.ok && c.ok, true)
+  assert.deepEqual(a.started, b.started, '并发调用应拿到同一份结果')
+})
