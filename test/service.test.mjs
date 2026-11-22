@@ -133,6 +133,28 @@ test('停止时交出会话汇总：事件分三类、id 连续、RSS 有采样'
   assert.deepEqual(st.session, stopped, 'status 里也应该能拿到最近一次汇总')
 })
 
+test('采集中途断掉也要把账结掉（失败注入要用）', async () => {
+  let cap = null
+  let stopped = null
+  const svc = createWatchService(
+    base({
+      onWatchStop: (s) => (stopped = s),
+      startCapture: (arg) => {
+        cap = fakeCapture()(arg)
+        return cap
+      },
+    }),
+  )
+  await svc.start({ window: '直播' })
+  svc.emit('speech', { text: '说一句' })
+  cap.endWith(new Error('ffmpeg 退出码 1'))
+
+  assert.ok(stopped, '崩了却没交账 —— 那一轮只剩一句"它挂了"')
+  assert.equal(stopped.failed, true)
+  assert.match(stopped.reason, /ffmpeg/)
+  assert.equal(stopped.events, 1)
+})
+
 test('画面事件也要记进汇总（motion 不走 emit，最容易漏）', async () => {
   let n = 0
   const svc = createWatchService(

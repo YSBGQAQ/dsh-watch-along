@@ -128,5 +128,6 @@ export function formatSummary(s, extra = '') {
     rssText,
   ]
   if (extra) parts.push(extra)
+  if (s.failed) parts.push(`采集中断：${s.reason ?? '未知原因'}`)
   return `[会话汇总] ${parts.join('｜')}`
 }

@@ -156,6 +156,27 @@ export function createWatchService({
     if (!capture) return // 主动 stop 触发的，不算故障
     state = 'failed'
     reason = info instanceof Error ? String(info.message ?? info) : '采集结束'
+    // 故障也要结账：中途崩掉的那一轮如果什么都不留，事后只能说"它挂了"，
+    // 说不出挂之前跑了多久、出了多少条 —— 票 09 的故障注入正是要这两样。
+    let s = null
+    try {
+      stats.sample()
+      s = stats.summary({ at: now(), frameCount: frames })
+      s.failed = true
+      s.reason = reason
+      lastSession = s
+    } catch {
+      /* 记账失败不能挡住故障处理 */
+    }
+    if (rssTimer) {
+      clearInterval(rssTimer)
+      rssTimer = null
+    }
+    try {
+      onWatchStop?.(s)
+    } catch {
+      /* 回调失败不能改变故障状态 */
+    }
   }
 
   async function start({ window: want, size: askSize } = {}) {
