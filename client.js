@@ -98,7 +98,8 @@ window.__ModuleLoader__.load({
               setRejected({})
               setDirty({})
               setVal(d.value)
-              setMsg('已保存。画质档 / 帧率这类采集参数要重启 DSH 才生效。')
+              // 别把没接线的东西说成"会生效"：画质档与说话频率目前只落盘（见各行的灰字提示）
+              setMsg('已保存。帧率 / 通道开关要重启 DSH 才生效；画质档与说话频率目前只保存。')
             } else {
               const m = {}
               ;(d.rejected || []).forEach((x) => { m[x.field] = x.reason })
