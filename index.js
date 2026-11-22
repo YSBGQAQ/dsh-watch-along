@@ -464,8 +464,14 @@ export function apply(ctx, opts = {}) {
       }
       // 一场陪看结束时打一行总账：多久、多少条事件（分三类）、id 有没有缺、内存涨没涨、拼图成没成。
       // 这五项以前都不落盘，只能用 python 的旁证日志推 —— 票 09 的三个数就是这么丢的。
-      const composeText = `拼图 ${composeOk + composeFail} 张（成功 ${composeOk} / 失败 ${composeFail}）`
-      both(formatSummary(summary, composeText))
+      // 一场没采到帧就别打汇总：那多半是"刚开就停"，打出来全是 0，会把真正那组数字盖掉
+      // （2026-11-23 06:51 实测：第二次空的汇总紧跟在有效汇总后面，只有 19 秒之差）。
+      if (summary && summary.frames === 0 && summary.events === 0) {
+        both('[会话汇总] 这一场没有采到帧（刚开就停？），不记数')
+      } else {
+        const composeText = `拼图 ${composeOk + composeFail} 张（成功 ${composeOk} / 失败 ${composeFail}）`
+        both(formatSummary(summary, composeText))
+      }
       composeOk = 0
       composeFail = 0
     },
@@ -609,10 +615,16 @@ export function apply(ctx, opts = {}) {
     listWindows,
     serviceStatus: () => supervisor.status(),
     defaultWindow: cur.window || '',
+    // 帧图**必须落在插件目录下**。默认值用的是进程 cwd，而 DSH 启动插件时 cwd 不是仓库根，
+    // 结果 2026-11-23 那轮 66 次取帧的 PNG 全写到了别处（日志有"取帧"、仓库里一张没有）。
+    outDir: path.join(HERE, '.scratch', 'run', 'frames'),
     // 取帧记账：waker 靠这个时间判断"上一轮到底看没看画面"。日志留痕，方便事后核对。
     onFrame: (info) => {
       lastFrameAt = info?.at ?? Date.now()
-      both(`取帧 #${info?.seq ?? '?'}：${Math.round((info?.bytes ?? 0) / 1024)}KB，${info?.ok ? '已附图' : '附图失败'}`)
+      both(
+        `取帧 #${info?.seq ?? '?'}：${Math.round((info?.bytes ?? 0) / 1024)}KB，${info?.ok ? '已附图' : '附图失败'}` +
+          (info?.file ? ` → ${info.file}` : ''),
+      )
     },
     // 票 11：记住"谁开的陪看"。agent 句柄来自 watch_start 的 run context，
     // 不是靠 sessionController 反查 —— 宿主没把那个服务给插件（实测取不到）。

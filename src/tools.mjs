@@ -123,7 +123,7 @@ export function createTools({ service, listWindows, attachments = null, outDir =
         const { ref, via, attachmentError } = await deliver(shot.png, `watch-along-${seq}.png`)
         // 记一笔"它真的看了"：唤醒那边靠这个时间戳决定"要不要催它看图"。
         try {
-          onFrame?.({ seq, at: Date.now(), bytes: shot.png.length, via, ok: !attachmentError })
+          onFrame?.({ seq, at: Date.now(), bytes: shot.png.length, via, ok: !attachmentError, file })
         } catch {
           /* 记账失败不能影响取帧 */
         }
