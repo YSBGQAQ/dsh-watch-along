@@ -204,7 +204,35 @@ export function apply(ctx, opts = {}) {
       return null
     }
   })()
-  both(`主动唤醒：${wakeEnabled ? '开' : '关'}（WATCH_ALONG_WAKE=1 打开）；sessionController=${sessionCtl ? '有' : '无'}`)
+  const has = (n) => {
+    try {
+      return !!ctx.get?.(n)
+    } catch {
+      return false
+    }
+  }
+  // attachments 是已知能拿到的（出图就是靠它），拿它当对照：
+  // 如果它也是 false，说明 get() 这条通路本身在插件 ctx 上不可用，不是某个服务缺席。
+  const probe = {
+    attachments: has('attachments'),
+    sessionController: has('sessionController'),
+    propSessionController: !!ctx.sessionController,
+    session: has('session'),
+    agents: has('agents'),
+    remote: has('remote'),
+    remoteSession: !!(ctx.remote && ctx.remote.session),
+  }
+  let ctxKeys = []
+  try {
+    ctxKeys = Object.keys(ctx).filter((k) => !k.startsWith('_'))
+  } catch {
+    ctxKeys = ['(取不到)']
+  }
+  both(
+    `主动唤醒：${wakeEnabled ? '开' : '关'}（WATCH_ALONG_WAKE=1 打开）；sessionController=${sessionCtl ? '有' : '无'}`,
+  )
+  both(`宿主能力探测：${JSON.stringify(probe)}`)
+  both(`插件 ctx 的自有键：${ctxKeys.slice(0, 60).join(',')}`)
 
   async function targetSessionId() {
     if (ctx.sessionId) return ctx.sessionId // 插件若被按会话实例化，这里直接就有
