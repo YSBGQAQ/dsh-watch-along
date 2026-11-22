@@ -18,3 +18,6 @@ __pycache__/
 # 系统
 Thumbs.db
 .DS_Store
+
+# 参考代码解压目录（本地看，不进仓库；原 zip 在 Downloads）
+.scratch/ref/
