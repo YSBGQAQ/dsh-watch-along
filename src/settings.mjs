@@ -12,6 +12,11 @@ export const DEFAULTS = Object.freeze({
   subtitle: true,
   speech: true,
   speechPerMin: 6,
+  // 唤醒节奏（对齐 see-now 的 defaultPace / maxAutonomousWakes / idleStopMin）
+  wakePace: 'calm', // calm 30s / normal 15s / dense 8s
+  maxWakes: 8, // 一次陪看最多主动说几次，1–200
+  idleStopMin: 3, // 多久没人调工具就收工（分钟）；0 = 不因空闲收工
+
   host: '0.0.0.0',
   audioSource: 'system', // system = 整机混音；process:<pid|名字> = 只录某个进程（采集已实现，票 17）。注意：真正生效的是 asr_service 的环境变量 WATCH_ALONG_AUDIO_SOURCE，这个设置项还没接到那条线上 // 手机端监听地址：0.0.0.0 = 局域网可连，127.0.0.1 = 只本机
   // 高级（折叠）：裸阈值，正常不该改
@@ -20,6 +25,9 @@ export const DEFAULTS = Object.freeze({
 })
 
 /** 三个预设。数值来自 spec 的场景表。 */
+/** 唤醒节奏三档，秒数与 see-now 的 PACES 一致（calm 30 / normal 15 / dense 8）。 */
+export const PACES = Object.freeze({ calm: 30, normal: 15, dense: 8 })
+
 export const PRESETS = Object.freeze({
   game: { quality: 'high', fps: 12, density: 'dense', speechPerMin: 4 },
   lecture: { quality: 'medium', fps: 8, density: 'normal', speechPerMin: 6 },
@@ -52,6 +60,22 @@ export function validate(patch, current = DEFAULTS) {
           Object.assign(value, PRESETS[raw])
         }
         break
+      case 'wakePace':
+        if (!PACES[raw]) reject(key, `只能是 ${Object.keys(PACES).join(' / ')}`)
+        else value.wakePace = raw
+        break
+      case 'maxWakes': {
+        const n = Number(raw)
+        if (!Number.isInteger(n) || n < 1 || n > 200) reject(key, '必须是 1–200 的整数')
+        else value.maxWakes = n
+        break
+      }
+      case 'idleStopMin': {
+        const n = Number(raw)
+        if (!Number.isInteger(n) || n < 0 || n > 1440) reject(key, '必须是 0–1440 的整数（分钟，0 = 不因空闲收工）')
+        else value.idleStopMin = n
+        break
+      }
       case 'quality':
         if (!QUALITIES.includes(raw)) reject(key, `只能是 ${QUALITIES.join(' / ')}`)
         else value.quality = raw

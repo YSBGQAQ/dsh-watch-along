@@ -38,3 +38,29 @@ test('窗口标题会被去空白', () => {
   const r = validate({ window: '  哔哩哔哩  ' })
   assert.equal(r.value.window, '哔哩哔哩')
 })
+
+// ── 唤醒节奏三项（对齐 see-now 的 defaultPace / maxAutonomousWakes / idleStopMin）──
+import { PACES } from '../src/settings.mjs'
+
+test('wakePace 只认三档，写错要报出可选值', () => {
+  assert.equal(validate({ wakePace: 'dense' }).ok, true)
+  const bad = validate({ wakePace: 'fast' })
+  assert.equal(bad.ok, false)
+  assert.match(bad.rejected[0].reason, /calm/)
+  assert.deepEqual(Object.keys(PACES), ['calm', 'normal', 'dense'])
+})
+
+test('maxWakes 边界：1–200 收，0 与 201 拒', () => {
+  assert.equal(validate({ maxWakes: 1 }).ok, true)
+  assert.equal(validate({ maxWakes: 200 }).ok, true)
+  assert.equal(validate({ maxWakes: 0 }).ok, false)
+  assert.equal(validate({ maxWakes: 201 }).ok, false)
+  assert.equal(validate({ maxWakes: 3.5 }).ok, false)
+})
+
+test('idleStopMin 允许 0（= 不因空闲收工），负数与超过一天要拒', () => {
+  assert.equal(validate({ idleStopMin: 0 }).value.idleStopMin, 0)
+  assert.equal(validate({ idleStopMin: 1440 }).ok, true)
+  assert.equal(validate({ idleStopMin: -1 }).ok, false)
+  assert.equal(validate({ idleStopMin: 1441 }).ok, false)
+})
