@@ -142,31 +142,46 @@ window.__ModuleLoader__.load({
           '第一版只读：这里显示的是默认值与能力概览，修改设置在下一步（需要接主进程 RPC）。'))
     }
 
+    /** 左栏图标：宿主把这里当图标组件渲染，给个简单的眼睛即可。 */
+    function Icon() {
+      return h('span', { style: { fontSize: 15, lineHeight: 1 } }, '\u{1F441}')
+    }
+
     function apply(ctx) {
-      // 诊断：面板不出现时，先分清是"没找到设置入口"还是"客户端模块没加载/没拿到 slots"。
-      // 在 DSH 开发者工具的 Console 里搜 [watch-along] 就能看到。
+      // 插槽名必须对：2026-11-22 实测 —— 左栏那排（插件 / 自动化任务 / Purge）是
+      // `sidebar.panellist`（条目）+ `main`（内容区），**不是** `settings.section`。
+      // 之前注册到 settings.section，所以左栏永远看不到「陪看」。
+      // 参照：dsh-purge-community/client.js 就是这么注册的。
       try {
         console.info('[watch-along] client apply；slots=', !!(ctx && ctx.slots && ctx.slots.inject))
       } catch {
         /* 控制台不可用就算了 */
       }
       if (!ctx?.slots?.inject) {
-        // 没有 slots 服务：面板不出现，但插件其余部分照常（工具在 index.js 里注册）
         try {
-          console.warn('[watch-along] 拿不到 ctx.slots.inject，设置面板不会出现')
+          console.warn('[watch-along] 拿不到 ctx.slots.inject，侧栏入口不会出现')
         } catch {
           /* 忽略 */
         }
         return
       }
-      ctx.slots.inject('settings.section', () =>
+      ctx.slots.inject('sidebar.panellist', () =>
         ctx.slots.register(
           {
-            name: 'settings.section',
+            name: 'sidebar.panellist',
             id: 'watch-along',
-            order: 25, // 紧跟宿主的「插件」(15)。原来 210 排在最下面，用户根本找不到
-            label: () => '陪看',
-            inject: () => ({ ctx }),
+            order: 30,
+            label: '陪看', // 跟 purge 一样用字符串；宿主直接拿它当文字渲染
+            inject: () => ({}),
+          },
+          Icon,
+        ))
+      ctx.slots.inject('main', () =>
+        ctx.slots.register(
+          {
+            name: 'main',
+            key: 'watch-along',
+            inject: () => ({}),
           },
           Panel,
         ))
