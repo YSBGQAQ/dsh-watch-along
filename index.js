@@ -189,6 +189,10 @@ export function apply(ctx, opts = {}) {
   // ── 票 11：主动唤醒（默认关）──────────────────────────────────────────
   // 判定层在 src/wake.mjs（可全量单测），这里只负责"接到宿主的会话"。
   // 宿主能力拿不到就整条降级：只打一行日志，工具与三条通道照常。
+  // 记录"开始加载"这件事本身：apply 中途抛错时，plugin.log 里如果连这一行都没有，
+  // 就说明插件根本没被加载（而不是加载失败）—— 这两种情况以前分不清。
+  trace('apply 开始')
+
   // 主动唤醒这类的"启动体检"必须落到文件：宿主 logger 在 DSH 里不一定看得到，
   // 而这几行是判断宿主能力有没有的唯一依据。走 log + trace 两处。
   const both = (m) => {
@@ -211,27 +215,35 @@ export function apply(ctx, opts = {}) {
       return false
     }
   }
+  // 访问 ctx 上不存在的属性**可能抛**（宿主给的 ctx 若是"未知键即报错"的 Proxy）。
+  // 2026-11-22 踩过：这里没包 try/catch，直接让 apply 中途抛出 → 插件整体加载失败，
+  // 而 plugin.log 里连一行都没有，看起来像"没重启"。所以每个访问都必须自己兜住。
+  const safe = (fn, fallback) => {
+    try {
+      return fn()
+    } catch {
+      return fallback
+    }
+  }
   // attachments 是已知能拿到的（出图就是靠它），拿它当对照：
   // 如果它也是 false，说明 get() 这条通路本身在插件 ctx 上不可用，不是某个服务缺席。
   const probe = {
     attachments: has('attachments'),
     sessionController: has('sessionController'),
-    propSessionController: !!ctx.sessionController,
+    propSessionController: safe(() => !!ctx.sessionController, 'throw'),
     session: has('session'),
     agents: has('agents'),
     remote: has('remote'),
-    remoteSession: !!(ctx.remote && ctx.remote.session),
+    remoteSession: safe(() => !!(ctx.remote && ctx.remote.session), 'throw'),
   }
-  let ctxKeys = []
-  try {
-    ctxKeys = Object.keys(ctx).filter((k) => !k.startsWith('_'))
-  } catch {
-    ctxKeys = ['(取不到)']
-  }
+  const ctxKeys = safe(
+    () => Object.keys(ctx).filter((k) => !k.startsWith('_')),
+    ['(取不到)'],
+  )
   both(
     `主动唤醒：${wakeEnabled ? '开' : '关'}（WATCH_ALONG_WAKE=1 打开）；sessionController=${sessionCtl ? '有' : '无'}`,
   )
-  both(`宿主能力探测：${JSON.stringify(probe)}`)
+  both(`宿主能力探测：${safe(() => JSON.stringify(probe), '(序列化失败)')}`)
   both(`插件 ctx 的自有键：${ctxKeys.slice(0, 60).join(',')}`)
 
   async function targetSessionId() {
