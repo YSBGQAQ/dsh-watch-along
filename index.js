@@ -428,7 +428,7 @@ export function apply(ctx, opts = {}) {
           const since = observeSentAt ? Date.now() - observeSentAt : Infinity
           // 最早什么时候能发下一条：设置值 与 上一轮实测耗时×1.3 取大，且不低于 6 秒。
           // DSH 的消息是排队的，发得比模型跑得快，队列就会一直涨（实测 42 条）。
-          const floor = Math.max(obs * 1000, Math.round(lastTurnMs * 1.3), 6000)
+          const floor = Math.max(obs * 1000, Math.round(lastTurnMs * 1.2), 1000)
           if (since < floor) return
           if (observePending && since > 120_000) {
             both('静默观察：上一轮 120 秒无动静，视为已结束')
@@ -447,23 +447,6 @@ export function apply(ctx, opts = {}) {
           /* 非 Node 定时器 */
         }
         both(`静默观察已开启：每 ${obs} 秒一次（只更新理解，不输出文字）`)
-      }
-
-      // 规则说明**单独发一次**：之后每条唤醒只带数据。
-      // 每条都重复一遍角色设定，会话里会密成一片，模型还会把它当成"这一帧的回复"。
-      try {
-        const intro = waker?.introText?.()
-        if (intro && lastAgent) {
-          const r = deliverToAgent(
-            lastAgent,
-            `${intro}\n\n（以上是规则，以后每条我只给数据和画面编号，你按这个规则说 1–2 句；没叫你说话时不要输出文字。）`,
-            { sessions: sessionsOf(ctx) },
-          )
-          if (r.ok) waker?.markIntroSent?.()
-          both(`陪看规则已单独发送（flush=${r.flushed === null ? '无 sessions' : r.flushed}）`)
-        }
-      } catch (e) {
-        both(`陪看规则发送失败：${e?.message ?? e}`)
       }
 
       // 每一次 watch_start 都让循环重新起跑（含"上次已收工"的情况）

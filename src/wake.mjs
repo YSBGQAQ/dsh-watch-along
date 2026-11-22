@@ -95,6 +95,7 @@ export function createWaker({
 } = {}) {
   let events = []
   let introSent = false
+  let lastObserveAt = 0
   let lastWakeAt = 0
   let misses = 0
   let exhausted = false
@@ -106,7 +107,12 @@ export function createWaker({
    * 一旦它写了一个字，那一条就会留在会话里，看起来像在刷屏。
    */
   async function observe() {
-    const text = buildSummary(events, { now: now(), windowMs: summaryWindowMs, max: summaryMax, format })
+    // 只发**上次观察之后新来的**事件：秒级调用发整段摘要等于每秒重复一遍，
+    // 既浪费又让模型以为同一件事反复发生。
+    const floor = lastObserveAt || now() - 5000
+    const fresh = events.filter((e) => e.at > floor)
+    const text = fresh.map(format).join('\n')
+    lastObserveAt = now()
     const sid = (() => {
       try {
         return sheetId?.() ?? null
@@ -115,11 +121,11 @@ export function createWaker({
       }
     })()
     const prompt =
-      `【观察】现在是 ${new Date(now()).toTimeString().slice(0, 8)}，过去 ${gapSec} 秒的变化如下。\n` +
-      `${text || '（没有新变化）'}\n\n` +
+      `【观察】${new Date(now()).toTimeString().slice(0, 8)}，刚刚发生的变化：\n` +
+      `${text || '（这一秒没有新变化）'}\n\n` +
       (sid ? `可以调 watch_frame({sheetId:"${sid}"}) 看一眼。\n` : '') +
-      '**这一轮只更新你的理解，不要输出任何文字，不要评价，不要提问。** ' +
-      '直接结束这一轮即可；需要开口时系统会另外叫你。'
+      '**这一轮只更新你的理解。不要评价、不要提问、不要写"这一轮不出声"这类说明。** ' +
+      '要结束就直接结束；如果必须输出点什么，**只输出一个空格**（这样界面上不会留下一条消息）。'
     try {
       await send(prompt)
     } catch (e) {
@@ -170,11 +176,9 @@ export function createWaker({
     // 这条文案就是"陪聊"的全部指令 —— 模型看不到别的说明。
     // 2026-11-22 之前的写法是「只说了这一句就够，别复述整段」，
     // 结果它真的每帧碎碎念一句（三分钟七十多轮），和"影评人式陪聊"正好相反。
-    // 提示词**只发一次**（watch_start 时单独发），之后每条只带数据。
-    // 每条都带一遍角色设定的话，会话里会密集成一片，而且模型容易把它当成"这一帧的回复"。
-    const head = introSent
-      ? `【陪聊】按之前给你的规则，说 1–2 句。`
-      : renderPrompt(promptTemplate, gapSec)
+    // 说话那条**必带提示词**（用户明确要求）：它是这一轮该说什么的唯一依据，
+    // 只放在秒级数据里会被淹没，只发一次又会被上下文挤掉。
+    const head = renderPrompt(promptTemplate, gapSec)
     // 带上拼图编号：光有文字，模型只能评价"发生了什么"；看了图才能谈镜头与表演。
     // 这是 see-now 的 peek 模式（叫醒 → 先取图 → 再说）。
     const sid = (() => {
@@ -215,6 +219,7 @@ export function createWaker({
   function reset() {
     events = []
     introSent = false
+    lastObserveAt = 0
     lastWakeAt = 0
     misses = 0
     exhausted = false
