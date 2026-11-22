@@ -7,7 +7,7 @@ import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { createWatchService } from '../src/service.mjs'
 import { listWindows, lookupWindow } from '../src/windows.mjs'
-import { startCapture } from '../src/capture.mjs'
+import { startCapture } from '../src/capture-koffi.mjs'
 import { encode } from '../src/png.mjs'
 import { createPipeline } from '../vendor/dsh-see-now-main/src/pipeline.js'
 

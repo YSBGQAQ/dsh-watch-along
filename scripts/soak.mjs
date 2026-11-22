@@ -9,7 +9,7 @@
 //   3. 不涨     —— RSS 与缓冲帧数在一段时间后应趋于平稳
 import { createWatchService } from '../src/service.mjs'
 import { listWindows, lookupWindow } from '../src/windows.mjs'
-import { startCapture } from '../src/capture.mjs'
+import { startCapture } from '../src/capture-koffi.mjs'
 import { encode } from '../src/png.mjs'
 import { createPipeline } from '../vendor/dsh-see-now-main/src/pipeline.js'
 
@@ -47,6 +47,8 @@ const service = createWatchService({
   startCapture,
   encode,
   createPipeline: () => createPipeline({ width: 798, height: 450, fps: 8, changeLog: true, changeLogMax: 500 }),
+  // koffi 在进程内直抓，没有子进程、没有 stderr —— 这个回调现在是死路，永远不会触发。
+  // 保留它是因为 service 的选项名还叫 onCaptureStderr（见票 20 的迁移记录）。
   onCaptureStderr: (s) => {
     const t = String(s).trim()
     if (t) say('ffmpeg:', t.slice(0, 160))

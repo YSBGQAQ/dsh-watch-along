@@ -6,7 +6,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { lookupWindow } from '../src/windows.mjs'
-import { startCapture } from '../src/capture.mjs'
+import { startCapture } from '../src/capture-koffi.mjs'
 import { encode } from '../src/png.mjs'
 
 const frag = process.argv[2]
@@ -33,7 +33,8 @@ const cap = startCapture({
   height: region.height,
   fps: 1,
   onFrame: (f) => { latest = f },
-  onStderr: () => {},
+  // onStderr 是 ffmpeg 时代的选项：koffi 在进程内直抓，没有子进程也没有 stderr。
+  // 传了也不会生效（startCapture 的解构里没有这个键），所以这里直接不传。
   onClose: (why) => console.error('[capture closed]', why ?? ''),
 })
 

@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { createWatchService } from '../src/service.mjs'
 import { listWindows, lookupWindow } from '../src/windows.mjs'
-import { startCapture } from '../src/capture.mjs'
+import { startCapture } from '../src/capture-koffi.mjs'
 import { encode } from '../src/png.mjs'
 
 const want = process.argv[2]
