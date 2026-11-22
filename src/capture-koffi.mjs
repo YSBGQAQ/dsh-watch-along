@@ -196,7 +196,11 @@ export function startCapture({ region, width, height, fps = 8, onFrame, onClose 
   const outW = Math.max(1, Math.round(width || region2.width))
   const outH = Math.max(1, Math.round(height || region2.height))
   const params = { region: region2, width: outW, height: outH, fps }
-  const interval = Math.max(50, Math.round(1000 / fps))
+  // fps 传 NaN / 0 / 负数时 Math.round(1000/fps) 会是 NaN，setInterval(fn, NaN)
+  // 等于约 1ms 空转 —— CPU 打满、帧全丢，看起来像"采集卡死"。入口直接兜住。
+  const fpsSafe = Number.isFinite(fps) && fps > 0 ? fps : 8
+  params.fps = fpsSafe
+  const interval = Math.max(50, Math.round(1000 / fpsSafe))
   const t0 = Date.now()
   let i = 0
   let stopped = false

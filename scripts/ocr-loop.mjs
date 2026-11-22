@@ -18,9 +18,10 @@ const gapMs = Number(process.argv[3] ?? 5) * 1000
 const minutes = Number(process.argv[4] ?? 10)
 
 const w = lookupWindow(frag)
-// lookupWindow 已经处理过 DPI（dpiScale 一并返回），采集层按 hidpi 走 —— 这正是
-// 手写 ffmpeg 坐标两次算错的那个坑，这里不再自己算。
-const region = { x: w.x, y: w.y, width: w.width, height: w.height, hwnd: w.hwnd }
+// **dpiScale 必须带上**：lookupWindow 给的是逻辑像素，koffi 靠 region.dpiScale 换算成
+// 物理像素。漏了它 k 会回落到 1，150% 屏上抓到的是左上角一块错位画面 ——
+// 这正是本票开头记的「三次全偏」。手写 ffmpeg 坐标时踩的也是这个坑。
+const region = { x: w.x, y: w.y, width: w.width, height: w.height, hwnd: w.hwnd, dpiScale: w.dpiScale }
 console.log(`窗口 ${JSON.stringify(region)} dpiScale=${w.dpiScale ?? '?'}`)
 
 const DIR = path.resolve('.scratch', 'run', 'ocr')

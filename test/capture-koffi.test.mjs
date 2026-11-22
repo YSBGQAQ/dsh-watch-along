@@ -67,7 +67,23 @@ test('只传 region、不传 width/height 时输出尺寸跟 region 一致', () 
   }
 })
 
-test('stop() 之后不再回调 onFrame', async () => {
+test('fps 是垃圾值时退回 8，不能把 setInterval 打成 1ms 空转', () => {
+  for (const bad of [NaN, 0, -1, Infinity]) {
+    const cap = startCapture({
+      region: { x: 0, y: 0, width: 8, height: 8, dpiScale: 1 },
+      width: 8,
+      height: 8,
+      fps: bad,
+    })
+    try {
+      assert.equal(cap.params.fps, 8, `fps=${bad} 没有退回 8`)
+    } finally {
+      cap.stop()
+    }
+  }
+})
+
+test('stop() 之后不再回调 onFrame', async (t) => {
   let n = 0
   const cap = startCapture({
     region: { x: 0, y: 0, width: 8, height: 8, dpiScale: 1 },
@@ -78,8 +94,19 @@ test('stop() 之后不再回调 onFrame', async () => {
       n += 1
     },
   })
-  cap.stop()
-  const before = n
-  await new Promise((r) => setTimeout(r, 160))
-  assert.equal(n, before, 'stop() 之后还在出帧')
+  try {
+    // 先让它真的出过帧，否则「stop 后不再出帧」是恒真的空断言。
+    await new Promise((r) => setTimeout(r, 300))
+    if (n === 0) {
+      // 没有桌面会话 / 抓不到帧时，这条用例没有信息量，明确 skip 而不是假装通过
+      t.skip('这台机器 300ms 内没抓到任何帧，stop 语义无法验证')
+      return
+    }
+    const before = n
+    cap.stop()
+    await new Promise((r) => setTimeout(r, 200))
+    assert.equal(n, before, 'stop() 之后还在出帧')
+  } finally {
+    cap.stop()
+  }
 })

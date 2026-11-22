@@ -57,7 +57,9 @@ koffi 是 native 调用，**参数类型写错直接段错误**，不是异常�
 
 **未验**：插件里跑一轮，确认 bottom 带读到的是字幕而非书签栏（需 DSH 重启）。
 
-## 收尾：删掉旧采集前的迁移（2026-11-22）
+## Comments
+
+### 2026-11-22 收尾：删掉旧采集前的迁移
 
 原本以为「删掉 `src/capture.mjs`」是删一个文件，实际它有 **四个调用方**，而且其中一个是票 09 要用的脚本：
 
@@ -69,13 +71,15 @@ koffi 是 native 调用，**参数类型写错直接段错误**，不是异常�
 | `scripts/ocr-loop.mjs` | ✅ 顺带删掉 `onStderr`（ffmpeg 时代选项，koffi 解构里没这个键，传了是空转） |
 
 - 迁完 `grep` 确认零残留引用，`src/capture.mjs` 已 `git rm`。
-- **顺带修好一件事**：这四个脚本现在也走 koffi 的 `dpiScale` 换算。旧 ffmpeg 路径靠手算坐标，本票开头记过「三次全偏（DPI 换算错两次）」——脚本以前是带着这个坑在跑的。
-- 新增 `test/capture-koffi.test.mjs`（6 条）：`windowRect` 传非字符串/空串抛 `TypeError`、`capture` 缺尺寸抛错、`params` 形状（`fps/region/width/height` 缺一个就死在 `status()`）、`dpiScale` 换算、只给 `region` 时输出尺寸跟随、`stop()` 之后不再出帧。
+- **顺带修好一处真偏位**：`soak` / `smoke` / `probe-30s-events` 三条走 `lookupWindow`，`dpiScale` 自带，迁到 koffi 后换算正确；但 `ocr-loop.mjs` 是**自己拼 region** 的，把 `dpiScale` 弄丢了 —— 漏了它 k 会回落到 1，150% 屏上抓到的是左上角一块错位画面。本次补上，并改了那句已经说不通的旧注释（原文写"采集层按 hidpi 走"）。
+- **顺带兜住一个空转**：`fps` 传 `NaN` / 0 / 负数时，`Math.round(1000/fps)` 是 `NaN`，`setInterval(fn, NaN)` 约等于 1ms 空转 —— CPU 打满、看起来像"采集卡死"。现在入口退回 8。
+- 新增 `test/capture-koffi.test.mjs`（7 条）：`windowRect` 传非字符串/空串抛 `TypeError`、`capture` 缺尺寸抛错、`params` 形状（`fps/region/width/height` 缺一个就死在 `status()`）、`dpiScale` 换算、只给 `region` 时输出尺寸跟随、`fps` 垃圾值退回 8、`stop()` 之后不再出帧。
+  - 最后那条一开始写成"stop 后计数不变"，但 `stop()` 在首拍之前就调了，计数恒为 0，**等于空断言**。改成先跑 300ms 确认出过帧，出过再断言 stop 后不再增加；一帧都没抓到时明确 `skip`，不假装通过。
 
 真机：`node scripts/soak.mjs "see-now新版本发布" 3` → `frames=1402 / state=running / 断号 0 / RSS 100→100 / verdict 通过`。
 （`events=0` 是正常的：那个页面是暂停的静态画面，没有变化事件。）
 
-## 发现（属票 A7 的范围，本票不动）
+### 2026-11-22 发现：onClose 语义不一致（属票 A7 的范围，本票不动）
 
 两个采集实现对 `onClose` 的语义**不一样**：
 
