@@ -3,6 +3,7 @@
 // 工具（给 AI）与 HTTP（给手机）都只是它的薄适配器；测试也只打这里。
 // 屏幕、窗口、时间、PNG 编码、pipeline 全是注入的 —— 所以测试不需要真屏幕，也不加载 koffi。
 import { createEventQueue } from './events.mjs'
+import { composeGrid, pickEvenly } from './compose-sheet.mjs'
 import { randomBytes } from 'node:crypto'
 
 const DEFAULT_SIZE = { width: 798, height: 450 }
@@ -75,7 +76,8 @@ export function createWatchService({
   const eventQueue = queue ?? createEventQueue({ now })
   let capture = null
   let pipe = null
-  let latest = null // { t, at, buf }
+  let latest = null
+  const recentFrames = [] // { t, at, buf }
   let latestSheet = null // 最近一张真拼出来的图（pipeline 出图时才更新）
   let prevBuf = null
   let title = null
@@ -165,6 +167,10 @@ export function createWatchService({
         onClose: onCaptureEnded,
         onFrame: ({ t, buf }) => {
           latest = { t, at: now(), buf }
+          // 留最近 5 秒的原始帧："每 3 秒拼一张"要从这里取，不能只看 latest（那只有一帧）
+          recentFrames.push({ t, at: now(), buf, width: dim.width, height: dim.height })
+          const keepFrom = t - 5
+          while (recentFrames.length && recentFrames[0].t < keepFrom) recentFrames.shift()
           frames += 1
           if (!pipe) return
 
@@ -275,6 +281,42 @@ export function createWatchService({
     return { png: encode({ width, height, rgb: buf }), width, height, t, at }
   }
 
+  /**
+   * 把最近 `seconds` 秒的帧等距取 `cells` 帧拼成一张图，存进 sheetStore 并返回编号。
+   *
+   * 为什么要它：唤醒时给模型一张"这几秒长什么样"的图，比只给文字有用得多；
+   * 而 pipeline 出的拼图是按变化强度产的，不按时间 —— 时间轴上会缺段。
+   */
+  function composeSheet({ seconds = 3, cells = 6, width = 798, height = 450 } = {}) {
+    if (!recentFrames.length) return null
+    const newest = recentFrames[recentFrames.length - 1].t
+    const from = newest - Math.max(0.5, seconds)
+    const inWindow = recentFrames.filter((f) => f.t >= from)
+    const chosen = pickEvenly(inWindow, cells)
+    const grid = composeGrid({ frames: chosen, canvasW: width, canvasH: height })
+    if (!grid) return null
+
+    const id = randomBytes(9).toString('base64url')
+    const png = encode({ width: grid.width, height: grid.height, rgb: grid.rgb })
+    sheetStore.set(id, {
+      png,
+      width: grid.width,
+      height: grid.height,
+      t: newest,
+      expiresAt: now() + SHEET_TTL_MS,
+    })
+    while (sheetStore.size > SHEET_KEEP) sheetStore.delete(sheetStore.keys().next().value)
+    return {
+      sheetId: id,
+      cells: grid.cells,
+      cols: grid.cols,
+      rows: grid.rows,
+      seconds: Math.round((newest - from) * 10) / 10,
+      t: newest,
+      pngBytes: png.length,
+    }
+  }
+
   /** 读事件。`waitMs > 0` 走长轮询，没事件就等到点返回 timedOut。 */
   async function events({ sinceId = null, waitMs = 0, limit = 100, lastSec = 0 } = {}) {
     if (waitMs > 0) {
@@ -325,5 +367,5 @@ export function createWatchService({
     return eventQueue.add(kind, payload)
   }
 
-  return { start, stop, frame, rawFrame, sheet, status, events, emit }
+  return { start, stop, frame, rawFrame, sheet, composeSheet, status, events, emit }
 }

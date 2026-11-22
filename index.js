@@ -301,6 +301,8 @@ export function apply(ctx, opts = {}) {
   let eventSeq = 0
   let lastWokeSeq = 0
   let lastSheet = null // 最近一张拼图的编号，唤醒时交给模型看图
+  let lastComposite = null // 最近一张"每 3 秒按时间拼出来的"多帧图
+  let composeTimer = null
   let observeTimer = null // 静默观察轮的定时器（observeSec > 0 才有）
   let observeSentAt = 0 // 上一条观察发出的时刻
   let observePending = false // 发出去还没等到"它动了"
@@ -324,7 +326,7 @@ export function apply(ctx, opts = {}) {
       // 两边都设间隔会互相打架：0 表示不在这里节流。
       minGapMs: 0,
       promptTemplate: cur.commentPrompt,
-      sheetId: () => lastSheet,
+      sheetId: () => lastComposite ?? lastSheet,
       gapSec: cur.wakeGapSec ?? 30,
       // send 失败只是这一拍没叫，不能影响陪看；waker 内部会捕获并记日志。
       // 投递走 agent.followup + sessions.flush（见 agent-delivery.mjs）。
@@ -397,6 +399,10 @@ export function apply(ctx, opts = {}) {
       })
     },
     onWatchStop: () => {
+      if (composeTimer) {
+        clearInterval(composeTimer)
+        composeTimer = null
+      }
       if (observeTimer) {
         clearInterval(observeTimer)
         observeTimer = null
@@ -419,6 +425,23 @@ export function apply(ctx, opts = {}) {
         both('主动说话已关闭（说话间隔 = 0）：只采集，不主动开口')
         return
       }
+      // 每 3 秒按时间拼一张多帧图：pipeline 出的图按"变化"产，时间轴上会缺段；
+      // 这张是等距取帧，模型才看得到"这 3 秒大致长什么样"。
+      if (composeTimer) clearInterval(composeTimer)
+      composeTimer = setInterval(() => {
+        try {
+          const c = service.composeSheet({ seconds: 3, cells: 6, width: viewSize.width, height: viewSize.height })
+          if (c?.sheetId) lastComposite = c.sheetId
+        } catch (e) {
+          both(`拼图失败：${e?.message ?? e}`)
+        }
+      }, 3000)
+      try {
+        composeTimer.unref?.()
+      } catch {
+        /* 非 Node 定时器 */
+      }
+
       // 静默观察：每隔 observeSec 秒叫醒它"只看不说"，让它保持对剧情的跟进。
       // 注意：这一轮它仍然是一轮模型调用（花钱），只是**不产生聊天气泡**。
       if (observeTimer) clearInterval(observeTimer)

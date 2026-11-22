@@ -113,12 +113,18 @@ export function createWaker({
     const fresh = events.filter((e) => e.at > floor)
     const text = fresh.map(format).join('\n')
     lastObserveAt = now()
-    // 不带 sheetId（用户要求）：观察轮只给文字增量。
+    const sid = (() => {
+      try {
+        return sheetId?.() ?? null
+      } catch {
+        return null
+      }
+    })()
     const prompt =
       `【观察】${new Date(now()).toTimeString().slice(0, 8)}，刚刚发生的变化：\n` +
       `${text || '（这一秒没有新变化）'}\n\n` +
-      '用**一句话**总结所有有用信息，直接输出到一个 ``` 代码块里。\n' +
-      '不要寒暄、不要提问、不要写"这一轮不出声"这类说明。'
+      (sid ? `这一段的多帧拼图：${sid}（要看就调 watch_frame({sheetId:"${sid}"})）\n` : '') +
+      '用一句话总结所有有用信息，直接输出到一个 ``` 代码块里。'
     try {
       await send(prompt)
     } catch (e) {
