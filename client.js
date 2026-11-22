@@ -223,7 +223,7 @@ window.__ModuleLoader__.load({
               '采集中断：' + (st.watch.reason || '未知原因'),
               h('br', null),
               h('span', { style: { fontWeight: 400, opacity: 0.85 } },
-                '请点下面的「重启服务」，再重新 watch_start'))
+                '重新 watch_start 即可；如果上面的服务变红了，先点「重启服务」'))
           : null,
         st.watch && st.watch.state === 'running'
           ? h('div', { style: { marginTop: 8, opacity: 0.7, fontSize: 12 } },
