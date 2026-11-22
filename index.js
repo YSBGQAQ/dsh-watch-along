@@ -387,7 +387,13 @@ export function apply(ctx, opts = {}) {
         return null
       }
     }
-    const canAttach = !!attachmentsOf()?.saveImage
+    // **2026-11-23 07:12 实测：这条路会让模型调用几乎全部失败** ——
+    // 会话记录里 50 次 finish=error、只有 1 次 stop，41 次 llm/retry，
+    // 错误是 `DeepSeek Messages transport failed`。图确实进了 user 消息，
+    // 但宿主/模型侧不接受这种输入，每一个带图的请求都打成 TRANSPORT。
+    // 关掉：退回"工具调用看图"（那条路 90 分钟 0 报错）。留着代码，等宿主支持再开。
+    const ATTACH_IMAGE_IN_MESSAGE = false
+    const canAttach = ATTACH_IMAGE_IN_MESSAGE && !!attachmentsOf()?.saveImage
     waker = createWaker({
       enabled: true,
       log: both,
