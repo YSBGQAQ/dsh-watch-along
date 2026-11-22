@@ -98,8 +98,7 @@ window.__ModuleLoader__.load({
               setRejected({})
               setDirty({})
               setVal(d.value)
-              // 别把没接线的东西说成"会生效"：画质档与说话频率目前只落盘（见各行的灰字提示）
-              setMsg('已保存。帧率 / 通道开关要重启 DSH 才生效；画质档与说话频率目前只保存。')
+              setMsg('已保存。采集参数与通道开关都要重启 DSH 才生效。')
             } else {
               const m = {}
               ;(d.rejected || []).forEach((x) => { m[x.field] = x.reason })
@@ -131,7 +130,7 @@ window.__ModuleLoader__.load({
         row('quality', '画质档',
           h('select', { style: fieldStyle, value: val.quality, onChange: (e) => edit('quality', e.target.value) },
             QUALITY_OPTS.map((q) => h('option', { key: q, value: q }, q))),
-          '会存下来；目前还没接到采集尺寸上'),
+          '改小更省 CPU，但字幕像素也变少、OCR 准头会降'),
         row('subtitle', '画面字幕（OCR）',
           h('input', { type: 'checkbox', checked: !!val.subtitle, onChange: (e) => edit('subtitle', e.target.checked) }),
           '关掉就不读屏幕上的字'),
@@ -151,7 +150,7 @@ window.__ModuleLoader__.load({
           '分钟；0 = 不因空闲收工'),
         row('speechPerMin', '说话频率上限',
           h('input', { type: 'number', min: 1, max: 30, style: Object.assign({}, fieldStyle, { width: 90 }), value: val.speechPerMin, onChange: (e) => edit('speechPerMin', Number(e.target.value)) }),
-          '会存下来；目前还没接到转写节流上'),
+          '每分钟最多几条进事件队列（转写照常跑，只是超出的不发）'),
         h('div', { style: { marginTop: 10 } },
           h('button', {
             type: 'button',

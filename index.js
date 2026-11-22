@@ -16,6 +16,7 @@ import { deliverToAgent } from './src/agent-delivery.mjs'
 import { createWatchLoop } from './src/watch-loop.mjs'
 import { createSupervisor } from './src/service-supervisor.mjs'
 import { loadSettings, PACES } from './src/settings.mjs'
+import { createRateLimit } from './src/rate-limit.mjs'
 import crypto from 'node:crypto'
 import { defineToolCompat } from './vendor/dsh-see-now-main/src/define-tool.js'
 import http from 'node:http'
@@ -137,6 +138,15 @@ export function apply(ctx, opts = {}) {
   const settingsFile = path.join(HERE, '.scratch', 'run', 'settings.json')
   const cur = loadSettings(settingsFile).value
 
+  // 画质档 → 采集尺寸。三档都是 16:9，只改分辨率：
+  // 尺寸越小越省 CPU，但字幕像素也越少 —— 改低画质要重新看 OCR 的准头。
+  const QUALITY_SIZE = {
+    low: { width: 480, height: 270 },
+    medium: { width: 640, height: 360 },
+    high: { width: 798, height: 450 },
+  }
+  const viewSize = QUALITY_SIZE[cur.quality] ?? QUALITY_SIZE.high
+
   // 字幕通道：两次一致才收录。onEvent 走 service.emit，和画面共用一条队列。
   let svcRef = null
   // 设置里关掉就不建这条通道（省 CPU，也免得用户以为关了还在跑）
@@ -172,11 +182,19 @@ export function apply(ctx, opts = {}) {
     },
   })
 
+  // 说话频率上限：转写照常跑，只是超出这一分钟配额的**不进队列**。
+  // 不进队列才是"防刷屏"的真意 —— 转写本身停了会让字幕断档。
+  const speechLimit = createRateLimit({ perMin: cur.speechPerMin ?? 6 })
   const speech = cur.speech === false ? null : createSpeechReader({
     listen,
     windowSec: 3,
     onEvent: (e) => {
       if (e?.error) return log(`声音通道：${e.error}`)
+      if (!speechLimit.allow()) {
+        const n = speechLimit.takeDropped()
+        if (n && n % 10 === 1) log(`声音：本分钟已到 ${cur.speechPerMin ?? 6} 条上限，累计略过 ${n} 条`)
+        return
+      }
       svcRef?.emit('speech', e)
       log(`声音：${e.text}`)
     },
@@ -328,9 +346,13 @@ export function apply(ctx, opts = {}) {
     encode,
     subtitle,
     speech,
+    // 采集尺寸与帧率都来自设置（画质档 / 预设）。两处必须同一个值，
+    // 否则 service 按 798×450 记账、pipeline 按另一个尺寸切网格，坐标会整体偏掉。
+    size: viewSize,
+    fps: cur.fps ?? 8,
     // 判据、档位、拼图全部来自参考库；打开 changeLog 才有"每张图一条变化摘要"可读。
     createPipeline: () =>
-      createPipeline({ width: 798, height: 450, fps: cur.fps ?? 8, changeLog: true, changeLogMax: 500 }),
+      createPipeline({ ...viewSize, fps: cur.fps ?? 8, changeLog: true, changeLogMax: 500 }),
     onCaptureStderr: (s) => log(`ffmpeg: ${String(s).trim().slice(0, 300)}`),
     onEvent: (kind, payload) => {
       if (!waker) return
