@@ -24,10 +24,20 @@ export function userMessage(text, { source = 'watch-along' } = {}) {
 /**
  * 投递一条消息给指定 agent。**永不抛** —— 返回 `{ok, via?, reason?}`。
  *
- * `steer` 失败（宿主版本老 / 轮次边界冲突）时退回 `followup`：投不到才是真丢话，
- * 顺序错了只是晚一轮。
+ * ## 默认必须走 followup，不是 steer
+ *
+ * see-now 的 CHANGELOG（PR #56）把这两条分得很清楚：
+ *
+ * > `steer` → `next-step`（下一个 step 就交给模型）。**人在窗口里说的话**改走 `steer`，
+ * > **机器自己叫的「有新画面了」仍走 `followup`**。
+ *
+ * steer 是"人插话"的通道，会直接塞进正在跑的轮次里 —— 用它做主动唤醒，用户会看到
+ * 会话被打断（2026-11-22 实测踩到：一条 40 字的唤醒让正在进行的对话中断）。
+ * 我们是机器自己叫，所以默认 followup：排队到下一个轮次，不抢当前这一步。
+ *
+ * `mode: 'steer'` 保留，但只该用在"用户自己在那个窗口里说话"的场景。
  */
-export function deliverToAgent(agent, text, { mode = 'steer', source = 'watch-along' } = {}) {
+export function deliverToAgent(agent, text, { mode = 'followup', source = 'watch-along' } = {}) {
   if (!agent) return { ok: false, reason: 'no-agent' }
   if (typeof text !== 'string' || !text.trim()) return { ok: false, reason: 'empty-text' }
   const message = userMessage(text, { source })

@@ -258,6 +258,8 @@ export function apply(ctx, opts = {}) {
 
   // "最后一次 watch_start 的那个会话" —— 直接是这次的 agent 句柄，不用反查。
   let lastAgent = null
+  let lastAgentSession = '?'
+  const sessionOf = (a) => safe(() => a?.session?.header?.id ?? a?.session?.id ?? '?', '?')
 
   let waker = null
   if (wakeEnabled) {
@@ -268,9 +270,9 @@ export function apply(ctx, opts = {}) {
       // 投递走 agent.steer（下一个 step 就交给模型），退 followup。
       send: async (text) => {
         if (!lastAgent) throw new Error('还没绑定会话：先调用一次 watch_start')
-        const r = deliverToAgent(lastAgent, text)
+        const r = deliverToAgent(lastAgent, text) // 默认 followup：机器叫不抢用户的轮次
         if (!r.ok) throw new Error(`投递失败：${r.reason}`)
-        if (r.via !== 'steer') both(`唤醒退回 ${r.via}（${r.fallback ?? '宿主没有 steer'}）`)
+        both(`唤醒投递方式 ${r.via}${r.fallback ? `（steer 失败退回：${r.fallback}）` : ''}`)
       },
       // 读会话历史要 sessionController，而宿主没把它给插件（实测取不到）。
       // 传 null = waker 走保守分支：不计数，只保留主动唤醒、不自动停。
@@ -296,7 +298,7 @@ export function apply(ctx, opts = {}) {
       // 语音事件说明有人在说话，但不等于"用户回应了我们"—— 这里不归零，交给历史判定
       void waker.maybeWake({ kind, ...payload }).then((r) => {
         // 成功也要留痕：不然"到底有没有叫醒"只能靠会话里有没有新消息来猜
-        if (r?.woke) both(`主动唤醒已投递：${String(r.text ?? '').length} 字`)
+        if (r?.woke) both(`主动唤醒已投递：${String(r.text ?? '').length} 字 → ${lastAgentSession}`)
         else if (r?.reason && r.reason !== 'disabled' && r.reason !== 'not-worth-it') {
           both(`主动唤醒没发：${r.reason}`)
         }
@@ -313,7 +315,8 @@ export function apply(ctx, opts = {}) {
     onAgent: (agent) => {
       if (!agent) return
       lastAgent = agent
-      both(`主动唤醒已绑定会话：${safe(() => agent.session?.header?.id ?? agent.session?.id ?? '?', '?')}`)
+      lastAgentSession = sessionOf(agent)
+      both(`主动唤醒已绑定会话：${lastAgentSession}`)
     },
     attachments: () => {
       try {

@@ -36,18 +36,24 @@ test('userMessage 每次 id 都不同（否则宿主会当成同一条去重）'
   assert.notEqual(userMessage('a').id, userMessage('b').id)
 })
 
-test('默认走 steer：正在跑的轮次也立刻看得见', () => {
+test('默认走 followup：机器自动叫不能抢用户正在跑的轮次', () => {
   const a = fakeAgent()
   const r = deliverToAgent(a, '有动静')
   assert.equal(r.ok, true)
-  assert.equal(r.via, 'steer')
+  assert.equal(r.via, 'followup')
   assert.equal(a.got.length, 1)
   assert.equal(a.got[0].msg.content[0].text, '有动静')
 })
 
+test('显式给 mode:steer 才走 steer（那是"人插话"的通道）', () => {
+  const a = fakeAgent()
+  const r = deliverToAgent(a, '用户自己在窗口里说的话', { mode: 'steer' })
+  assert.equal(r.via, 'steer')
+})
+
 test('steer 抛错要退回 followup，不能把话丢在手里', () => {
   const a = fakeAgent({ steerThrows: true })
-  const r = deliverToAgent(a, '有动静')
+  const r = deliverToAgent(a, '有动静', { mode: 'steer' })
   assert.equal(r.ok, true)
   assert.equal(r.via, 'followup')
   assert.match(r.fallback, /轮次边界冲突/)
