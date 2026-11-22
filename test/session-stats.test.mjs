@@ -72,6 +72,27 @@ test('标签可换：快照不该冒充"会话汇总"', () => {
   assert.match(formatSummary(sum, '', '会话快照 5min'), /^\[会话快照 5min\]/)
 })
 
+test('延迟：按类收 p50/p90，并在汇总行里带出来', () => {
+  const s = createSessionStats({ now: () => 0, rss: () => 0 })
+  s.reset(0)
+  ;[1000, 2000, 3000, 4000, 5000].forEach((ms, i) => s.onEvent({ id: i + 1, kind: 'ocr', latencyMs: ms }))
+  ;[8000, 9000, 10000].forEach((ms, i) => s.onEvent({ id: 10 + i, kind: 'speech', latencyMs: ms }))
+  const sum = s.summary({ at: 1000 })
+  assert.equal(sum.latency.ocr.n, 5)
+  assert.equal(sum.latency.ocr.p50, 3000)
+  assert.equal(sum.latency.ocr.p90, 5000)
+  assert.equal(sum.latency.speech.p50, 9000)
+  const line = formatSummary(sum)
+  assert.match(line, /延迟 OCR 3\.0\/5\.0s ｜ ASR 9\.0\/10\.0s/)
+})
+
+test('没有延迟样本时，汇总行不写"延迟"这一段', () => {
+  const s = createSessionStats({ now: () => 0, rss: () => 0 })
+  s.reset(0)
+  s.onEvent({ id: 1, kind: 'motion' })
+  assert.doesNotMatch(formatSummary(s.summary({ at: 1000 })), /延迟/)
+})
+
 test('时长格式：秒 / 分秒 / 时分秒', () => {
   assert.equal(fmtDuration(6), '6 秒')
   assert.equal(fmtDuration(1866), '31 分 06 秒')

@@ -33,6 +33,7 @@ test('同一行要出现两次才收录，且只收录一次', async () => {
   assert.equal(got.length, 1, '第二遍一致才发')
   assert.equal(got[0].text, '这波操作可以')
   assert.equal(got[0].band, 'bottom')
+  assert.ok(Number.isFinite(got[0].latencyMs) && got[0].latencyMs >= 0, '缺 latencyMs：汇总算不出真实延迟')
 
   await reader.feed(frame())
   assert.equal(got.length, 1, '同一条不该重复发')

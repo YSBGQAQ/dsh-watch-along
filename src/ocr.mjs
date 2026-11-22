@@ -338,6 +338,9 @@ export function createSubtitleReader({
               t0: Number((st.firstSeenReal ?? at / 1000).toFixed(2)),
               hits: st.hits,
               similarity: 1,
+              // 从"这一行第一次出现在画面上"到"事件发出去"用了多久。
+              // 这是唯一能跟"起点错位"分开的延迟数：不看视频时间，只看我们自己的管线。
+              latencyMs: Math.max(0, Math.round(now() - (st.firstSeenReal ?? at / 1000) * 1000)),
             }
             events.push(ev)
             onEvent?.(ev)

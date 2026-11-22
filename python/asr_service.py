@@ -566,7 +566,14 @@ def pull():
         w0, w1 = _wall_at(t0), _wall_at(t1)
         o0 = round(w0 - ACC["t_wall0"], 2) if (w0 is not None and ACC["t_wall0"]) else round(t0, 2)
         o1 = round(w1 - ACC["t_wall0"], 2) if (w1 is not None and ACC["t_wall0"]) else round(t1, 2)
-        done.append({"text": line["text"], "t0": o0, "t1": o1})
+        # 这一句从"声音进缓冲"到"交付出去"用了多久（毫秒）。只统计可交付的句子，
+        # 不含起点错位 —— 这是能直接对验收线的那把尺子（2026-11-23 加）。
+        obj = {"text": line["text"], "t0": o0, "t1": o1}
+        if w1 is not None:
+            lat = int(round((time.time() - w1) * 1000))
+            if 0 <= lat <= 60000:
+                obj["latencyMs"] = lat
+        done.append(obj)
         _dump(line["text"], o0, o1)
         ACC["seen"].append(key)
         if len(ACC["seen"]) > SEEN_MAX:

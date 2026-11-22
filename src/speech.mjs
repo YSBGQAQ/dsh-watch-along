@@ -54,6 +54,9 @@ export function createSpeechReader({
           t1: Number(line.t1 ?? 0),
           at: now(),
         }
+        // 转写服务给的"声音→交付"耗时（毫秒）。有就带上，汇总里要用它算真实延迟。
+        const lat = Number(line.latencyMs)
+        if (Number.isFinite(lat) && lat >= 0) event.latencyMs = lat
         fresh.push(event)
         onEvent?.(event)
       }

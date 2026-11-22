@@ -22,6 +22,18 @@ test('一转出句子就发 speech 事件，带原文与时间码', async () => 
   assert.equal(typeof got[0].at, 'number')
 })
 
+test('转写服务给了 latencyMs 就原样带上（汇总要算真实延迟）', async () => {
+  const { reader, got } = mk([[{ text: '我说话', t0: 0, t1: 2, latencyMs: 4200 }]])
+  await reader.tick()
+  assert.equal(got[0].latencyMs, 4200)
+})
+
+test('没给 latencyMs 就不编一个', async () => {
+  const { reader, got } = mk([[{ text: '我说话', t0: 0, t1: 2 }]])
+  await reader.tick()
+  assert.equal('latencyMs' in got[0], false)
+})
+
 test('跨窗口重复的同一句不再发（窗口边界会被切两半）', async () => {
   const { reader, got } = mk([
     [{ text: '真的非常感谢你们给我的支持', t0: 0, t1: 3 }],

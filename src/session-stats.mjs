@@ -39,6 +39,10 @@ export function createSessionStats({ now = Date.now, rss = () => process.memoryU
   let gaps = [] // [{ from, to }]，只在真的缺号时才有内容
   let samples = [] // RSS（MB）序列
   let frames = 0
+  // 每条事件的"声音/画面 → 事件"耗时（毫秒）。这是唯一不含"起点错位"的延迟口径。
+  // 只收 ocr / speech 两类：motion 没有对应的采集时刻。
+  let lat = { ocr: [], speech: [] }
+  const LAT_KEEP = 2000 // 采样上限，长跑别无限涨
 
   function reset(at = now()) {
     startedAt = at
@@ -50,6 +54,7 @@ export function createSessionStats({ now = Date.now, rss = () => process.memoryU
     gaps = []
     samples = []
     frames = 0
+    lat = { ocr: [], speech: [] }
   }
 
   /** 每条入队事件调一次。id 由队列按 1 递增发号，缺号意味着中间有事件没记上。 */
@@ -57,6 +62,14 @@ export function createSessionStats({ now = Date.now, rss = () => process.memoryU
     if (!e || !Number.isFinite(e.id)) return
     count += 1
     byKind[e.kind] = (byKind[e.kind] ?? 0) + 1
+    if (e.kind === 'ocr' || e.kind === 'speech') {
+      const ms = Number(e.latencyMs)
+      if (Number.isFinite(ms) && ms >= 0 && ms < 120_000) {
+        const arr = lat[e.kind]
+        arr.push(ms)
+        if (arr.length > LAT_KEEP) arr.shift()
+      }
+    }
     if (firstId == null) firstId = e.id
     else if (e.id > lastId + 1) gaps.push({ from: lastId + 1, to: e.id - 1 })
     if (lastId == null || e.id > lastId) lastId = e.id
@@ -67,6 +80,13 @@ export function createSessionStats({ now = Date.now, rss = () => process.memoryU
     const mb = Math.round(rss() / MB)
     samples.push(mb)
     return mb
+  }
+
+  /** 取分位数（毫秒）。样本少于 1 个就返回 null。 */
+  function pick(arr, q) {
+    if (!arr.length) return null
+    const s = [...arr].sort((a, b) => a - b)
+    return s[Math.min(s.length - 1, Math.floor(s.length * q))]
   }
 
   function summary({ at = now(), frameCount = null } = {}) {
@@ -91,6 +111,10 @@ export function createSessionStats({ now = Date.now, rss = () => process.memoryU
       missing: span > count ? span - count : 0,
       gaps: gaps.slice(0, 10),
       rssMb: { first: rssFirst, last: rssLast, peak: rssPeak, samples: samples.length },
+      latency: {
+        ocr: { n: lat.ocr.length, p50: pick(lat.ocr, 0.5), p90: pick(lat.ocr, 0.9) },
+        speech: { n: lat.speech.length, p50: pick(lat.speech, 0.5), p90: pick(lat.speech, 0.9) },
+      },
     }
   }
 
@@ -128,6 +152,13 @@ export function formatSummary(s, extra = '', label = '会话汇总') {
     rssText,
   ]
   if (extra) parts.push(extra)
+  // 真实延迟：从"声音/画面出现"到"事件发出去"，不含视频起点错位。
+  const L = s.latency || {}
+  const latText = ['ocr', 'speech']
+    .filter((k) => L[k]?.p50 != null)
+    .map((k) => `${k === 'ocr' ? 'OCR' : 'ASR'} ${(L[k].p50 / 1000).toFixed(1)}/${(L[k].p90 / 1000).toFixed(1)}s`)
+    .join(' ｜ ')
+  if (latText) parts.push(`延迟 ${latText}（p50/p90）`)
   if (s.failed) parts.push(`采集中断：${s.reason ?? '未知原因'}`)
   return `[${label}] ${parts.join('｜')}`
 }
