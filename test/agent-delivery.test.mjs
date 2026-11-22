@@ -87,3 +87,31 @@ test('只有 followup 的 agent 也能用', () => {
   assert.equal(r.via, 'followup')
   assert.equal(got.length, 1)
 })
+
+test('图随消息走：content 里多一个 image 块，形状照抄宿主', () => {
+  const msg = userMessage('看图', { imageIds: ['sha256:abc123'] })
+  assert.equal(msg.content.length, 2)
+  assert.deepEqual(msg.content[1], { type: 'image', attachment: { attachmentId: 'sha256:abc123' } })
+})
+
+test('没有图时 content 只有文本，不多塞空块', () => {
+  const msg = userMessage('纯文本')
+  assert.equal(msg.content.length, 1)
+  assert.equal(msg.content[0].type, 'text')
+})
+
+test('宿主不认 image 块：退回纯文本，不能让这一轮叫不醒', () => {
+  let calls = 0
+  const agent = {
+    session: 's1',
+    followup(msg) {
+      calls += 1
+      if (msg.content.some((c) => c.type === 'image')) throw new Error('unsupported content type')
+    },
+    status: 'idle',
+  }
+  const r = deliverToAgent(agent, '看图', { imageIds: ['sha256:abc'] })
+  assert.equal(r.ok, true, '应该退回文本并成功')
+  assert.equal(calls, 2, '先带图失败，再发纯文本')
+  assert.match(r.imageFallback, /unsupported/)
+})

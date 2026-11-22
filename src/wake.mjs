@@ -90,6 +90,9 @@ export function createWaker({
   // 调过 watch_frame"。返回 false 时，这一拍**不发新数据**，只发一条"先看图"的指令 ——
   // 不给数据是关键，给了它照样能盲答。
   frameGate = null,
+  // 图直接附在消息里（2026-11-23）：这种情况下不必再要求它调工具 ——
+  // 它一睁眼就有画面，多一次工具往返纯属浪费 2 秒。
+  attachImages = false,
   maxFrameNudges = 3, // 连续催几次还不动，就放弃强制，恢复发数据（防死锁）
   maxMisses = 5,
   summaryWindowMs = 180_000,
@@ -144,6 +147,7 @@ export function createWaker({
 
   /** 强制看图的那句硬要求：有拼图给编号，没有就让它直接抓当前帧。 */
   function frameHint(sid) {
+    if (attachImages) return '图已附在这条消息里（最后一张），直接看它，不要再调用 watch_frame。'
     return sid
       ? '先调用 watch_frame（sheetId 用 image 的值）看当前画面，再按 prompt 的要求回答。'
       : '先调用 watch_frame（不带参数，抓当前帧）看画面，再按 prompt 的要求回答。'

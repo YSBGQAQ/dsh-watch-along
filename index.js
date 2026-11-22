@@ -379,6 +379,15 @@ export function apply(ctx, opts = {}) {
     watchLoop?.noteActivity()
   }
   if (wakeEnabled) {
+    /** 宿主的附件服务。取不到就返回 null —— 出图、附图都靠它，但拿不到也不能崩。 */
+    const attachmentsOf = () => {
+      try {
+        return ctx.get?.('attachments') ?? null
+      } catch {
+        return null
+      }
+    }
+    const canAttach = !!attachmentsOf()?.saveImage
     waker = createWaker({
       enabled: true,
       log: both,
@@ -387,16 +396,38 @@ export function apply(ctx, opts = {}) {
       promptTemplate: cur.commentPrompt,
       sheetId: () => lastComposite ?? lastSheet,
       composeSec: 3,
-      // 强制看图：传进去的是"上一轮叫醒之后它有没有调过 watch_frame"。
-      // 没看过就不发新数据，只催它看（waker 内部有次数上限，卡不死）。
-      frameGate: (sinceWakeAt) => lastFrameAt > (sinceWakeAt ?? 0),
+      // 强制看图：图能随消息附上时（正常情况）就不必再走工具，门闩直接放行；
+      // 附件服务不可用才退回"上一轮有没有调 watch_frame"这套。
+      frameGate: canAttach ? () => true : (sinceWakeAt) => lastFrameAt > (sinceWakeAt ?? 0),
+      attachImages: canAttach,
       gapSec: cur.wakeGapSec ?? 30,
       // send 失败只是这一拍没叫，不能影响陪看；waker 内部会捕获并记日志。
       // 投递走 agent.followup + sessions.flush（见 agent-delivery.mjs）。
       send: async (text) => {
         if (!lastAgent) throw new Error('还没绑定会话：先调用一次 watch_start')
-        const r = deliverToAgent(lastAgent, text, { sessions: sessionsOf(ctx) })
+        // 把当前帧**直接附在这条消息里**：模型不用再花一次往返去调 watch_frame。
+        // 实测（2026-11-23）：调工具那条路每轮 2 个 step、约 4 秒；附在消息里只要 1 个 step。
+        let imageIds = null
+        try {
+          if (!canAttach) throw new Error('宿主没有 attachments 服务')
+          const shot = await service.frame({ live: true, maxWidth: 640 })
+          const svc = attachmentsOf()
+          if (svc?.saveImage) {
+            const ref = await svc.saveImage.call(svc, {
+              data: shot.png,
+              mediaType: 'image/png',
+              name: `wake-${Date.now()}.png`,
+            })
+            const id = typeof ref === 'string' ? ref : (ref?.attachmentId ?? ref?.id ?? null)
+            if (id) imageIds = [String(id)]
+          }
+        } catch (e) {
+          both(`唤醒附图失败，本条走纯文本：${e?.message ?? e}`)
+        }
+        const r = deliverToAgent(lastAgent, text, { sessions: sessionsOf(ctx), imageIds })
         if (!r.ok) throw new Error(`投递失败：${r.reason}`)
+        // 图已经随消息送到，门闩不必再催它调工具。
+        if (imageIds && !r.imageFallback) lastFrameAt = Date.now()
         both(`唤醒投递 ${r.via}（flush=${r.flushed === null ? '没有 sessions 服务' : r.flushed}）`)
       },
       // 读会话历史要 sessionController，而宿主没把它给插件（实测取不到）。

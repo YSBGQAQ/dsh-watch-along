@@ -445,3 +445,19 @@ test('强制看图也管静默观察：没看图就不发观察数据，只催',
   const third = await h.waker.observe()
   assert.equal(third.nudged, undefined, '看过之后应该恢复')
 })
+
+test('图随消息附上时，不再要求调工具（省一次往返）', async () => {
+  const sent = []
+  const w = createWaker({
+    enabled: true,
+    minGapMs: 0,
+    promptTemplate: '你是搭子',
+    sheetId: () => 'S9',
+    attachImages: true,
+    send: async (t) => sent.push(t),
+  })
+  await w.maybeWake({ kind: 'motion', strength: 'high', text: '切镜' })
+  const j = JSON.parse(sent[0])
+  assert.match(j.mustSee, /图已附/, '应该告诉它图就在消息里')
+  assert.doesNotMatch(j.mustSee, /先调用 watch_frame/, '不该再逼它调工具')
+})

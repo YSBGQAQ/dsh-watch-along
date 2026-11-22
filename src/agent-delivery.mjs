@@ -12,11 +12,18 @@ import { randomUUID } from 'node:crypto'
  * 宿主 `steer()` / `followup()` 要的是一条 user 角色的消息。
  * `source.kind` 用自定义值，方便在会话里认出"这条是我们自己塞的"。
  */
-export function userMessage(text, { source = 'watch-along' } = {}) {
+export function userMessage(text, { source = 'watch-along', imageIds = null } = {}) {
+  const content = [{ type: 'text', text: String(text ?? '') }]
+  // 把图直接放进这条消息：模型不必再花一次往返调工具看图。
+  // 形状照抄会话里工具结果的那条（`{"type":"image","attachment":{"attachmentId":"sha256:…"}}`），
+  // 是宿主自己的格式，不是我们发明的。
+  for (const id of imageIds ?? []) {
+    if (typeof id === 'string' && id) content.push({ type: 'image', attachment: { attachmentId: id } })
+  }
   return {
     id: randomUUID(),
     role: 'user',
-    content: [{ type: 'text', text: String(text ?? '') }],
+    content,
     source: { kind: source },
   }
 }
@@ -40,11 +47,11 @@ export function userMessage(text, { source = 'watch-along' } = {}) {
 export function deliverToAgent(
   agent,
   text,
-  { mode = 'followup', source = 'watch-along', sessions = null } = {},
+  { mode = 'followup', source = 'watch-along', sessions = null, imageIds = null } = {},
 ) {
   if (!agent) return { ok: false, reason: 'no-agent' }
   if (typeof text !== 'string' || !text.trim()) return { ok: false, reason: 'empty-text' }
-  const message = userMessage(text, { source })
+  const message = userMessage(text, { source, imageIds })
   const done = (via, extra = {}) => {
     // followup 只是**排进队列**；不 flush 的话模型一直是 idle，看起来就是"自己停了"。
     // 出处：watch-together 的 `timer.js:116 wakeSession` —— followup 之后紧跟
@@ -66,25 +73,41 @@ export function deliverToAgent(
     }
     return { ok: true, via, flushed, ...extra }
   }
+  /**
+   * 投递，带图被拒就退回纯文本。
+   * 为什么必须退：带图是我们自己加的优化，宿主要是认不出 image 块，
+   * 这一轮就彻底叫不醒了 —— 宁可少一张图，也不能让陪看哑掉。
+   */
+  const tryFollowup = (msg) => {
+    try {
+      agent.followup(msg)
+      return { ok: true, extra: {} }
+    } catch (e) {
+      if (imageIds?.length) {
+        try {
+          agent.followup(userMessage(text, { source }))
+          return { ok: true, extra: { imageFallback: String(e?.message ?? e) } }
+        } catch (e2) {
+          return { ok: false, reason: String(e2?.message ?? e2) }
+        }
+      }
+      return { ok: false, reason: String(e?.message ?? e) }
+    }
+  }
+
   if (mode === 'steer' && typeof agent.steer === 'function') {
     try {
       agent.steer(message)
       return done('steer')
     } catch (e) {
       // 继续往下走 followup
-      try {
-        agent.followup(message)
-        return done('followup', { fallback: String(e?.message ?? e) })
-      } catch (e2) {
-        return { ok: false, reason: String(e2?.message ?? e2) }
-      }
+      const r = tryFollowup(message)
+      if (!r.ok) return r
+      return done('followup', { fallback: String(e?.message ?? e), ...r.extra })
     }
   }
-  try {
-    if (typeof agent.followup !== 'function') return { ok: false, reason: 'no-followup' }
-    agent.followup(message)
-    return done('followup')
-  } catch (e) {
-    return { ok: false, reason: String(e?.message ?? e) }
-  }
+  if (typeof agent.followup !== 'function') return { ok: false, reason: 'no-followup' }
+  const r = tryFollowup(message)
+  if (!r.ok) return r
+  return done('followup', r.extra)
 }
