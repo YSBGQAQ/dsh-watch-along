@@ -409,6 +409,14 @@ export function apply(ctx, opts = {}) {
       // 投递走 agent.followup + sessions.flush（见 agent-delivery.mjs）。
       send: async (text) => {
         if (!lastAgent) throw new Error('还没绑定会话：先调用一次 watch_start')
+        // 收工之后还会有一两拍尾巴（队列里排着的事件）：这时连屏幕都不采了，
+        // 附图必然失败，白白发一条"还没开始采集"的日志 + 一次模型调用。
+        // 直接不发 —— 2026-11-23 07:19 实测出现过一次。
+        try {
+          if (service.status().state !== 'running') return
+        } catch {
+          /* 状态读不到就照常发 */
+        }
         // 把当前帧**直接附在这条消息里**：模型不用再花一次往返去调 watch_frame。
         // 实测（2026-11-23）：调工具那条路每轮 2 个 step、约 4 秒；附在消息里只要 1 个 step。
         let images = null
