@@ -13,6 +13,7 @@ import { createSpeechReader } from './src/speech.mjs'
 import { createMobileServer } from './src/http.mjs'
 import { createWaker } from './src/wake.mjs'
 import { deliverToAgent } from './src/agent-delivery.mjs'
+import { createWatchLoop } from './src/watch-loop.mjs'
 import crypto from 'node:crypto'
 import { defineToolCompat } from './vendor/dsh-see-now-main/src/define-tool.js'
 import http from 'node:http'
@@ -262,23 +263,50 @@ export function apply(ctx, opts = {}) {
   const sessionOf = (a) => safe(() => a?.session?.header?.id ?? a?.session?.id ?? '?', '?')
 
   let waker = null
+  let watchLoop = null
+  let eventSeq = 0
+  let lastWokeSeq = 0
   if (wakeEnabled) {
     waker = createWaker({
       enabled: true,
       log: both,
+      // 节奏交给下面的 watchLoop 管（tick 每 2 秒一次），waker 只负责"说什么"。
+      // 两边都设间隔会互相打架：0 表示不在这里节流。
+      minGapMs: 0,
       // send 失败只是这一拍没叫，不能影响陪看；waker 内部会捕获并记日志。
-      // 投递走 agent.steer（下一个 step 就交给模型），退 followup。
+      // 投递走 agent.followup + sessions.flush（见 agent-delivery.mjs）。
       send: async (text) => {
         if (!lastAgent) throw new Error('还没绑定会话：先调用一次 watch_start')
-        const r = deliverToAgent(lastAgent, text) // 默认 followup：机器叫不抢用户的轮次
+        const r = deliverToAgent(lastAgent, text, { sessions: sessionsOf(ctx) })
         if (!r.ok) throw new Error(`投递失败：${r.reason}`)
-        both(`唤醒投递方式 ${r.via}${r.fallback ? `（steer 失败退回：${r.fallback}）` : ''}`)
+        both(`唤醒投递 ${r.via}（flush=${r.flushed === null ? '没有 sessions 服务' : r.flushed}）`)
       },
       // 读会话历史要 sessionController，而宿主没把它给插件（实测取不到）。
       // 传 null = waker 走保守分支：不计数，只保留主动唤醒、不自动停。
       hasUserMessageSince: null,
     })
-    both('主动唤醒已开启，等第一次 watch_start 绑定会话')
+
+    // sessions 服务要**发送时再取**：watch-together 的注释写得很明白 ——
+  // "webServer 可能晚于插件就绪；动态 inject 比 apply 时硬探测更可靠"。
+  // 在 apply 里缓存一次，就等于把"服务晚到"判成"没有这个服务"。
+  const sessionsOf = (c) => safe(() => c.get?.('sessions') ?? null, null)
+
+  // 陪看循环：本地每 2 秒算一次，30 秒最多叫一次；没人接就不再叫（等下一次工具调用）。
+    watchLoop = createWatchLoop({
+      log: both,
+      gapMs: 30_000,
+      everyMs: 2_000,
+      hasNews: () => eventSeq > lastWokeSeq,
+      wake: async () => {
+        // strength 给 high 是因为这一层不再按强度筛（"一直陪"要求有新画面就说），
+        // 强度只影响摘要里的排序与是否提前返回，见票 11 的决策表。
+        const r = await waker.maybeWake({ kind: 'tick', strength: 'high' })
+        if (r.woke) lastWokeSeq = eventSeq
+        return r
+      },
+      onStop: (why) => both(`陪看循环已停：${why}`),
+    })
+    both('主动唤醒已开启；循环等 watch_start 再起（否则加载 3 分钟没人调工具就会自己收工）')
   }
 
   const service = createWatchService({
@@ -294,6 +322,7 @@ export function apply(ctx, opts = {}) {
     onCaptureStderr: (s) => log(`ffmpeg: ${String(s).trim().slice(0, 300)}`),
     onEvent: (kind, payload) => {
       if (!waker) return
+      eventSeq += 1
       waker.feed({ kind, ...payload })
       // 语音事件说明有人在说话，但不等于"用户回应了我们"—— 这里不归零，交给历史判定
       void waker.maybeWake({ kind, ...payload }).then((r) => {
@@ -304,7 +333,12 @@ export function apply(ctx, opts = {}) {
         }
       })
     },
-    onWatchStart: () => waker?.reset(),
+    onWatchStart: () => {
+      waker?.reset()
+      // 每一次 watch_start 都让循环重新起跑（含"上次已收工"的情况）
+      watchLoop?.restart()
+      lastWokeSeq = eventSeq
+    },
   })
 
   const tools = createTools({
@@ -328,6 +362,8 @@ export function apply(ctx, opts = {}) {
   })
 
   const disposers = []
+  // 关插件时停掉陪看循环，否则定时器会一直跑（Node 的 unref 只保证不阻退出）
+  if (watchLoop) disposers.push(() => watchLoop.stop('dispose'))
   svcRef = service
   for (const tool of tools) {
     // 单个工具注册失败不该拖垮其余：宿主可能对 schema 有额外要求。
@@ -335,7 +371,20 @@ export function apply(ctx, opts = {}) {
     try {
       // 必须过 defineTool：它把属性表编译成宿主认的 JSON Schema 并校验 output。
       // 直接 register 裸对象会被接受但不生效（实测：日志说注册了 6 个，会话里一个都没有）。
-      disposers.push(ctx.tools.register(defineToolCompat(tool)))
+      // 包一层：**任何一次工具调用都算"接住了上一条叫醒"**，陪看循环据此决定能不能叫下一条
+      // （see-now 的 noteActivity，见票 11）。
+      const wired = {
+        ...tool,
+        async execute(args, run) {
+          try {
+            watchLoop?.noteActivity()
+          } catch {
+            /* 记账失败不影响工具本身 */
+          }
+          return tool.execute(args, run)
+        },
+      }
+      disposers.push(ctx.tools.register(defineToolCompat(wired)))
       log(`已注册工具 ${tool.name}`)
       trace(`注册成功 ${tool.name}`)
     } catch (e) {

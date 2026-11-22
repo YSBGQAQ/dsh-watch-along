@@ -37,19 +37,44 @@ export function userMessage(text, { source = 'watch-along' } = {}) {
  *
  * `mode: 'steer'` 保留，但只该用在"用户自己在那个窗口里说话"的场景。
  */
-export function deliverToAgent(agent, text, { mode = 'followup', source = 'watch-along' } = {}) {
+export function deliverToAgent(
+  agent,
+  text,
+  { mode = 'followup', source = 'watch-along', sessions = null } = {},
+) {
   if (!agent) return { ok: false, reason: 'no-agent' }
   if (typeof text !== 'string' || !text.trim()) return { ok: false, reason: 'empty-text' }
   const message = userMessage(text, { source })
+  const done = (via, extra = {}) => {
+    // followup 只是**排进队列**；不 flush 的话模型一直是 idle，看起来就是"自己停了"。
+    // 出处：watch-together 的 `timer.js:116 wakeSession` —— followup 之后紧跟
+    // `sessions.flush(agent.session)`。没有 sessions（宿主没给这个服务）就跳过，
+    // 但那一条要能在日志里看出来，不能假装推成功了。
+    let flushed = null
+    try {
+      if (sessions?.flush) {
+        const r = sessions.flush(agent.session)
+        if (r && typeof r.then === 'function') {
+          r.catch(() => {})
+          flushed = true
+        } else {
+          flushed = true
+        }
+      }
+    } catch {
+      flushed = false
+    }
+    return { ok: true, via, flushed, ...extra }
+  }
   if (mode === 'steer' && typeof agent.steer === 'function') {
     try {
       agent.steer(message)
-      return { ok: true, via: 'steer' }
+      return done('steer')
     } catch (e) {
       // 继续往下走 followup
       try {
         agent.followup(message)
-        return { ok: true, via: 'followup', fallback: String(e?.message ?? e) }
+        return done('followup', { fallback: String(e?.message ?? e) })
       } catch (e2) {
         return { ok: false, reason: String(e2?.message ?? e2) }
       }
@@ -58,7 +83,7 @@ export function deliverToAgent(agent, text, { mode = 'followup', source = 'watch
   try {
     if (typeof agent.followup !== 'function') return { ok: false, reason: 'no-followup' }
     agent.followup(message)
-    return { ok: true, via: 'followup' }
+    return done('followup')
   } catch (e) {
     return { ok: false, reason: String(e?.message ?? e) }
   }
