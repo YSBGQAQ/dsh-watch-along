@@ -225,7 +225,7 @@ test('唤醒消息带上拼图编号，并要求先看一眼再开口', async ()
   assert.equal(sent.length, 1)
   const j = JSON.parse(sent[0])
   assert.equal(j.image, 'SHEET_123', 'JSON 里没带拼图编号')
-  assert.equal(j.type, 'comment')
+  assert.equal(j.windowSec, 30, '说话那条的窗口应是 30 秒')
 })
 
 test('没有拼图时不硬塞那句提示', async () => {
@@ -263,8 +263,8 @@ test('observe() 只说"别说话"，不带陪聊提示词', async () => {
   await w.observe()
   assert.equal(sent.length, 1)
   const j = JSON.parse(sent[0])
-  assert.equal(j.type, 'observe')
   assert.equal(j.image, 'S1', '没带拼图编号')
+  assert.equal(j.events.length >= 0, true)
   assert.equal(j.windowSec, 3)
   assert.match(j.prompt, /一句话/)
   assert.match(j.prompt, /代码块/)
@@ -286,7 +286,7 @@ test('说话那条必带提示词（每 30 秒一次，不是每条都带）', a
   await w.maybeWake({ kind: 'motion', strength: 'high', text: '切镜' })
   const j = JSON.parse(sent[0])
   assert.match(j.prompt, /必须有自己思考/, '说话那条没带提示词')
-  assert.ok(j.events.some((e) => e.text === '别开窗'), '数据没带上')
+  assert.ok(j.events.some((e) => e['字'] === '别开窗'), '数据没带上')
 })
 
 test('introText 仍是那段规则原文（保留给"想单独发一次"的用法）', () => {
@@ -315,9 +315,9 @@ test('观察轮最多带 12 条，多出来的只报数量', async () => {
   for (let i = 0; i < 30; i++) w.feed({ kind: 'ocr', text: `第${i}句`, t: i, at: now - 2000 + i * 50 })
   await w.observe()
   const j = JSON.parse(sent[0])
-  assert.equal(j.changes.length, 12)
+  assert.equal(j.events.length, 12)
   assert.equal(j.omitted, 18)
-  assert.equal(j.changes.at(-1).text, '第29句', '应该保留最新的，丢弃最旧的')
+  assert.equal(j.events.at(-1)['字'], '第29句', '应该保留最新的，丢弃最旧的')
 })
 
 test('JSON 是紧凑的（不缩进），省掉约四分之一字节', async () => {

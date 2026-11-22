@@ -107,16 +107,19 @@ export function createWaker({
    * 为什么要说"不要调用工具之外的任何东西"：模型不说的话，界面上就不会出现聊天气泡；
    * 一旦它写了一个字，那一条就会留在会话里，看起来像在刷屏。
    */
-  /** 一条事件压成 JSON 里的一项：只留模型用得上的字段。 */
+  /**
+   * 一条事件压成 JSON 里的一项。
+   *
+   * 用**字段名**承载类型（说 / 字 / 画），不再单开 kind 字段：
+   * 少一个键、少一对引号，模型读到的还是一个自解释的键。
+   * strength 也去掉了 —— 它只用于本地挑事件，写进消息对模型没有用处。
+   */
   function packEvent(e) {
-    const item = {
-      at: typeof e.at === 'number' ? new Date(e.at).toTimeString().slice(0, 8) : null,
-      t: typeof e.t === 'number' ? Math.round(e.t * 10) / 10 : null,
-      kind: e.kind ?? 'event',
-    }
-    if (e.text != null) item.text = String(e.text)
+    const key = { speech: '说', ocr: '字', motion: '画', cut: '切' }[e.kind] ?? '事'
+    const item = {}
+    item.at = typeof e.at === 'number' ? new Date(e.at).toTimeString().slice(0, 8) : null
+    item[key] = e.text != null ? String(e.text) : ''
     if (e.sheetId) item.sheetId = e.sheetId
-    if (e.strength) item.strength = e.strength
     return item
   }
 
@@ -140,13 +143,11 @@ export function createWaker({
     // **JSON 而不是散文**：模型读字段比读句子稳，prompt 也单独成字段，
     // 不会被当成"对这一帧的感叹"。
     const payload = {
-      type: 'observe',
       at: new Date(now()).toTimeString().slice(0, 8),
-      elapsedSec: Math.round(maxT * 10) / 10,
       windowSec: composeSec,
       image: sid ?? null,
       ...(fresh.length > MAX_EVENTS ? { omitted: fresh.length - MAX_EVENTS } : {}),
-      changes: shown.length ? shown.map(packEvent) : [{ note: `这 ${composeSec} 秒没有新变化` }],
+      events: shown.map(packEvent),
       prompt: '用一句话总结所有有用信息，直接输出到一个代码块里。',
     }
     // **紧凑序列化**（不缩进）：缩进约占 25%，而模型不在乎好看。
@@ -218,9 +219,7 @@ export function createWaker({
       .slice(0, summaryMax)
       .sort((a, b) => a.at - b.at)
     const payload = {
-      type: 'comment',
       at: new Date(now()).toTimeString().slice(0, 8),
-      elapsedSec: Math.round(maxT * 10) / 10,
       windowSec: gapSec,
       image: sid ?? null,
       events: picked.map(packEvent),
