@@ -8,10 +8,10 @@ import path from 'node:path'
 export const DEFAULTS = Object.freeze({
   window: '', // 标题片段；空 = 还没选窗口
   quality: 'high', // low | medium | high
-  fps: 8, // 采集帧率，1–30
+  fps: 8, // 采集帧率 0–30；**0 = 关闭画面通道**（只剩声音）
   subtitle: true,
   speech: true,
-  speechPerMin: 6,
+  speechPerMin: 6, // 每分钟最多几条语音转写进事件队列；0 = 不限（关闭这条限制）
   // 唤醒节奏（对齐 see-now，但节奏用秒数直接填，比三档更好控制）
   wakeGapSec: 30, // 两次主动说话的最小间隔（秒），0–300；**0 = 不说话，只采集**
   idleStopMin: 3, // 多久没人调工具就收工（分钟）；0 = 不因空闲收工
@@ -58,7 +58,7 @@ export function validate(patch, current = DEFAULTS) {
       }
       case 'fps': {
         const n = Number(raw)
-        if (!Number.isInteger(n) || n < 1 || n > 30) reject(key, '必须是 1–30 的整数')
+        if (!Number.isInteger(n) || n < 0 || n > 30) reject(key, '必须是 0–30 的整数（0 = 关闭画面）')
         else value.fps = n
         break
       }

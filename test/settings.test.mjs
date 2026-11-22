@@ -10,10 +10,10 @@ test('场景预设已删除：写 preset 会被当成未知字段拒掉', () => 
   assert.equal(r.rejected[0].field, 'preset')
 })
 
-test('fps 可设，范围 1–30', () => {
+test('fps 可设，范围 0–30（0 = 关闭画面通道）', () => {
   assert.equal(validate({ fps: 12 }).value.fps, 12)
   assert.equal(validate({}).value.fps, DEFAULTS.fps)
-  assert.equal(validate({ fps: 0 }).ok, false)
+  assert.equal(validate({ fps: 0 }).value.fps, 0)
   assert.equal(validate({ fps: 31 }).ok, false)
   assert.equal(validate({ fps: 7.5 }).ok, false)
 })
@@ -64,4 +64,16 @@ test('idleStopMin 允许 0（= 不因空闲收工），负数与超过一天要�
   assert.equal(validate({ idleStopMin: 1440 }).ok, true)
   assert.equal(validate({ idleStopMin: -1 }).ok, false)
   assert.equal(validate({ idleStopMin: 1441 }).ok, false)
+})
+
+test('fps 允许 0（= 关闭画面通道），负值与超过 30 仍拒', () => {
+  assert.equal(validate({ fps: 0 }).value.fps, 0)
+  assert.equal(validate({ fps: -1 }).ok, false)
+  assert.equal(validate({ fps: 31 }).ok, false)
+})
+
+test('speechPerMin 允许 0（= 不限制），31 拒', () => {
+  assert.equal(validate({ speechPerMin: 0 }).value.speechPerMin, 0)
+  assert.equal(validate({ speechPerMin: 31 }).ok, false)
+  assert.equal(validate({ speechPerMin: 2.5 }).ok, false)
 })

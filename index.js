@@ -147,10 +147,17 @@ export function apply(ctx, opts = {}) {
   }
   const viewSize = QUALITY_SIZE[cur.quality] ?? QUALITY_SIZE.high
 
+  // 采集帧率 0 = 关闭画面通道（只剩声音）。
+  // 但底层不能真的传 0：采集循环按 `1000/fps` 算间隔，0 会变成死循环。
+  // 所以实际仍以 1fps 维持采集，同时**不建 OCR、不产 motion 事件** —— 对外就是"画面关掉了"。
+  const fpsSet = cur.fps ?? 8
+  const videoOff = fpsSet === 0
+  const captureFps = videoOff ? 1 : fpsSet
+
   // 字幕通道：两次一致才收录。onEvent 走 service.emit，和画面共用一条队列。
   let svcRef = null
   // 设置里关掉就不建这条通道（省 CPU，也免得用户以为关了还在跑）
-  const subtitle = cur.subtitle === false ? null : createSubtitleReader({
+  const subtitle = cur.subtitle === false || videoOff ? null : createSubtitleReader({
     encode,
     recognize,
     // 2026-11-22：时间节流已移除。它原本给已废弃的「两次一致」判定留时间间隔，
@@ -184,15 +191,17 @@ export function apply(ctx, opts = {}) {
 
   // 说话频率上限：转写照常跑，只是超出这一分钟配额的**不进队列**。
   // 不进队列才是"防刷屏"的真意 —— 转写本身停了会让字幕断档。
-  const speechLimit = createRateLimit({ perMin: cur.speechPerMin ?? 6 })
+  // 0 = 关闭这条限制（不是"每分钟 0 条"）。所以这里直接不建限流器。
+  const speechPerMin = cur.speechPerMin ?? 6
+  const speechLimit = speechPerMin === 0 ? null : createRateLimit({ perMin: speechPerMin })
   const speech = cur.speech === false ? null : createSpeechReader({
     listen,
     windowSec: 3,
     onEvent: (e) => {
       if (e?.error) return log(`声音通道：${e.error}`)
-      if (!speechLimit.allow()) {
+      if (speechLimit && !speechLimit.allow()) {
         const n = speechLimit.takeDropped()
-        if (n && n % 10 === 1) log(`声音：本分钟已到 ${cur.speechPerMin ?? 6} 条上限，累计略过 ${n} 条`)
+        if (n && n % 10 === 1) log(`声音：本分钟已到 ${speechPerMin} 条上限，累计略过 ${n} 条`)
         return
       }
       svcRef?.emit('speech', e)
@@ -348,13 +357,14 @@ export function apply(ctx, opts = {}) {
     // 采集尺寸与帧率都来自设置（画质档 / 预设）。两处必须同一个值，
     // 否则 service 按 798×450 记账、pipeline 按另一个尺寸切网格，坐标会整体偏掉。
     size: viewSize,
-    fps: cur.fps ?? 8,
+    fps: captureFps,
     // 判据、档位、拼图全部来自参考库；打开 changeLog 才有"每张图一条变化摘要"可读。
     createPipeline: () =>
-      createPipeline({ ...viewSize, fps: cur.fps ?? 8, changeLog: true, changeLogMax: 500 }),
+      createPipeline({ ...viewSize, fps: captureFps, changeLog: true, changeLogMax: 500 }),
     onCaptureStderr: (s) => log(`ffmpeg: ${String(s).trim().slice(0, 300)}`),
     onEvent: (kind, payload) => {
       if (!waker) return
+      if (videoOff && kind === 'motion') return // 画面通道关闭：motion 一律不投
       eventSeq += 1
       waker.feed({ kind, ...payload })
       // 语音事件说明有人在说话，但不等于"用户回应了我们"—— 这里不归零，交给历史判定
