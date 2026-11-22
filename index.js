@@ -16,6 +16,7 @@ import { deliverToAgent } from './src/agent-delivery.mjs'
 import { createWatchLoop } from './src/watch-loop.mjs'
 import { createSupervisor } from './src/service-supervisor.mjs'
 import { loadSettings } from './src/settings.mjs'
+import { collectEnv, appendStartupLog } from './src/startup-log.mjs'
 import { createRateLimit } from './src/rate-limit.mjs'
 import crypto from 'node:crypto'
 import { defineToolCompat } from './vendor/dsh-see-now-main/src/define-tool.js'
@@ -137,6 +138,23 @@ export function apply(ctx, opts = {}) {
   // 设置（票 07）：启动时读一次，改完要重启才生效 —— 这是票面承认的约定。
   const settingsFile = path.join(HERE, '.scratch', 'run', 'settings.json')
   const cur = loadSettings(settingsFile).value
+
+  // 每次 DSH 启动写一条环境快照：出问题时能对比"上次能跑、这次不能"。
+  // 失败不能挡住插件加载 —— 日志是辅助，不是依赖。
+  const startupLogFile = path.join(HERE, '.scratch', 'run', 'startup.jsonl')
+  try {
+    // 用服务实际在跑的那个 python，而不是 PATH 上的（两者装的包常常不一样）
+    let pyExe = 'python'
+    try {
+      pyExe = JSON.parse(fs.readFileSync(path.join(HERE, '.scratch', 'run', 'services.json'), 'utf8')).python || 'python'
+    } catch {
+      /* 没配过就用 PATH 上的 */
+    }
+    const r = appendStartupLog(startupLogFile, collectEnv({ settings: cur, python: pyExe, extra: { pid: process.pid } }))
+    log(`启动日志已写入 ${r.file}（保留最近 ${r.kept} 条）`)
+  } catch (e) {
+    log(`启动日志写入失败：${e?.message ?? e}`)
+  }
 
   // 画质档 → 采集尺寸。三档都是 16:9，只改分辨率：
   // 尺寸越小越省 CPU，但字幕像素也越少 —— 改低画质要重新看 OCR 的准头。

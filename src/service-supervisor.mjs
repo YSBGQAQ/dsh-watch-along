@@ -134,8 +134,11 @@ export function createSupervisor({
   const cfg = config ?? resolveConfig(process.env, { rootDir: rootDir ?? process.cwd() })
 
   async function status() {
+    // 日志地址随状态一起发：面板拿不到文件系统，只能靠这里告诉它
+    const startupLog = cfg.rootDir ? `${cfg.rootDir}/.scratch/run/startup.jsonl` : null
     const [ocr, asr] = await Promise.all([probe(cfg.ports.ocr, { fetchImpl }), probe(cfg.ports.asr, { fetchImpl })])
     return {
+      startupLog,
       ok: true,
       configured: cfg.ready,
       missing: cfg.missing,
