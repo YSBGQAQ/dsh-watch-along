@@ -9,21 +9,6 @@ window.__ModuleLoader__.load({
     const React = require('react')
     const h = React.createElement
 
-    // 与 src/settings.mjs 保持一致的只读快照。
-    // 为什么内联而不是 import：client 跑在浏览器侧，拿不到主进程的模块。
-    const PRESETS = [
-      { id: 'game', name: '游戏', detail: '12fps · 高画质 · 4 条/分钟' },
-      { id: 'lecture', name: '讲课', detail: '8fps · 中画质 · 6 条/分钟' },
-      { id: 'cinema', name: '影视', detail: '8fps · 高画质 · 3 条/分钟' },
-    ]
-    const FIELDS = [
-      { k: 'window', label: '窗口标题片段', hint: '留空 = 还没选窗口' },
-      { k: 'preset', label: '场景预设', hint: '选预设会一并写入帧率与画质' },
-      { k: 'quality', label: '画质档', hint: 'low / medium / high' },
-      { k: 'subtitle', label: '画面字幕（OCR）', hint: '关掉就不读屏幕上的字' },
-      { k: 'speech', label: '声音转写（Whisper）', hint: '关掉就不听人说话' },
-      { k: 'speechPerMin', label: '说话频率上限', hint: '每分钟最多几条，防刷屏' },
-    ]
 
     const styles = {
       // 面板内容比可视区高，宿主不给滚动 → 自己滚。height+overflowY 缺一不可。
@@ -57,7 +42,6 @@ window.__ModuleLoader__.load({
     // 后端只有 /settings 两个动作，校验全在 src/settings.mjs 的 validate 里 ——
     // 非法值是 200 + rejected，界面负责把原因显示到对应输入框下面（票面明确要求）。
     const QUALITY_OPTS = ['low', 'medium', 'high']
-    const PRESET_NAMES = { game: '游戏', lecture: '讲课', cinema: '影视' }
 
     const fieldStyle = { padding: '4px 6px', fontSize: 13, border: '1px solid rgba(127,127,127,.35)', borderRadius: 5, background: 'transparent', color: 'inherit', width: 200 }
     const errStyle = { color: '#c0392b', fontSize: 11.5, marginTop: 2 }
@@ -123,10 +107,9 @@ window.__ModuleLoader__.load({
       return h('div', { style: styles.card },
         row('window', '窗口标题片段',
           h('input', { style: fieldStyle, value: val.window || '', placeholder: '留空 = 还没选窗口', onChange: (e) => edit('window', e.target.value) })),
-        row('preset', '场景预设',
-          h('select', { style: fieldStyle, value: val.preset, onChange: (e) => edit('preset', e.target.value) },
-            Object.keys(PRESET_NAMES).map((k) => h('option', { key: k, value: k }, PRESET_NAMES[k]))),
-          '选预设会一并写入帧率与画质'),
+        row('fps', '采集帧率',
+          h('input', { type: 'number', min: 1, max: 30, style: Object.assign({}, fieldStyle, { width: 90 }), value: val.fps, onChange: (e) => edit('fps', Number(e.target.value)) }),
+          '秒帧数，1–30。越高越跟得上动作，也越费 CPU'),
         row('quality', '画质档',
           h('select', { style: fieldStyle, value: val.quality, onChange: (e) => edit('quality', e.target.value) },
             QUALITY_OPTS.map((q) => h('option', { key: q, value: q }, q))),
@@ -229,10 +212,6 @@ window.__ModuleLoader__.load({
       return h('div', { style: styles.wrap },
         h('div', { style: styles.title }, '陪看'),
         h('div', { style: styles.intro }, '让 AI 看你的屏幕：画面变化、屏幕文字、系统声音，三条通道汇成一条事件流。'),
-        h(Section, { title: '场景预设' },
-          h('div', { style: styles.card },
-            PRESETS.map((p) => h('div', { key: p.id, style: { padding: '2px 0' } },
-              h('strong', null, p.name), ' — ', h('span', { style: { opacity: 0.65 } }, p.detail))))),
         h(Section, { title: '常用设置' },
           h(Settings, null)),
         h(Section, { title: '服务' },

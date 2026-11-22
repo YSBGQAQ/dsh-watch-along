@@ -12,7 +12,7 @@ import http from 'node:http'
 import fs from 'node:fs'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
-import { DEFAULTS, PRESETS, loadSettings, saveSettings } from './settings.mjs'
+import { DEFAULTS, loadSettings, saveSettings } from './settings.mjs'
 
 export const DEFAULT_PORTS = { ocr: 8765, asr: 8766, panel: 8790 }
 
@@ -101,7 +101,6 @@ export function handleSettings({ file, method = 'GET', body = null } = {}) {
         error: loaded.error ?? null,
         rejected: loaded.rejected,
         defaults: DEFAULTS,
-        presets: PRESETS,
       },
     }
   }

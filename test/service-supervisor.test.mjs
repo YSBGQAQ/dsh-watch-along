@@ -91,9 +91,9 @@ function tmpFile() {
 test('GET /settings 没文件时回默认值，不报错', () => {
   const r = handleSettings({ file: tmpFile(), method: 'GET' })
   assert.equal(r.status, 200)
-  assert.equal(r.body.value.preset, 'cinema')
+  assert.equal(r.body.value.fps, 8)
   assert.equal(r.body.source, 'default')
-  assert.ok(r.body.presets.cinema)
+  assert.equal('presets' in r.body, false, '预设已删，接口不该再返回它')
 })
 
 test('POST /settings 合法值落盘并回读一致', () => {
@@ -117,12 +117,11 @@ test('POST 非法值是 200 + rejected，且**不落盘**', () => {
   assert.equal(g.body.value.quality, 'high', '非法值把文件写坏了')
 })
 
-test('选预设会一次写入配套参数', () => {
+test('写 fps 能落盘', () => {
   const file = tmpFile()
-  handleSettings({ file, method: 'POST', body: { preset: 'game' } })
+  handleSettings({ file, method: 'POST', body: { fps: 12 } })
   const g = handleSettings({ file, method: 'GET' })
-  assert.equal(g.body.value.preset, 'game')
-  assert.equal(g.body.value.quality, g.body.presets.game.quality)
+  assert.equal(g.body.value.fps, 12)
 })
 
 test('POST 体不是 JSON 也要给得出人话', () => {

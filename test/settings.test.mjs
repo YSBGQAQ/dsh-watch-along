@@ -1,15 +1,21 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { DEFAULTS, PRESETS, validate, ENV_CHECKS } from '../src/settings.mjs'
+import { DEFAULTS, validate, ENV_CHECKS } from '../src/settings.mjs'
 
-test('三个预设各自写进对应参数', () => {
-  const g = validate({ preset: 'game' })
-  assert.equal(g.ok, true)
-  assert.equal(g.value.quality, 'high')
-  assert.equal(g.value.speechPerMin, 4)
+test('场景预设已删除：写 preset 会被当成未知字段拒掉', () => {
+  // 2026-11-22 用户决定删掉预设：它只是个"一次写四个值"的快捷方式，
+  // 而其中 density 谁都不读，留着反而误导。参数现在都在面板上直接填。
+  const r = validate({ preset: 'game' })
+  assert.equal(r.ok, false)
+  assert.equal(r.rejected[0].field, 'preset')
+})
 
-  const c = validate({ preset: 'cinema' })
-  assert.equal(c.value.speechPerMin, 3)
+test('fps 可设，范围 1–30', () => {
+  assert.equal(validate({ fps: 12 }).value.fps, 12)
+  assert.equal(validate({}).value.fps, DEFAULTS.fps)
+  assert.equal(validate({ fps: 0 }).ok, false)
+  assert.equal(validate({ fps: 31 }).ok, false)
+  assert.equal(validate({ fps: 7.5 }).ok, false)
 })
 
 test('非法值不抛错，而是逐条说明原因（200 + rejected）', () => {

@@ -7,8 +7,8 @@ import path from 'node:path'
 
 export const DEFAULTS = Object.freeze({
   window: '', // 标题片段；空 = 还没选窗口
-  preset: 'cinema',
   quality: 'high', // low | medium | high
+  fps: 8, // 采集帧率，1–30
   subtitle: true,
   speech: true,
   speechPerMin: 6,
@@ -24,11 +24,6 @@ export const DEFAULTS = Object.freeze({
 })
 
 /** 三个预设。数值来自 spec 的场景表。 */
-export const PRESETS = Object.freeze({
-  game: { quality: 'high', fps: 12, density: 'dense', speechPerMin: 4 },
-  lecture: { quality: 'medium', fps: 8, density: 'normal', speechPerMin: 6 },
-  cinema: { quality: 'high', fps: 8, density: 'calm', speechPerMin: 3 },
-})
 
 const QUALITIES = ['low', 'medium', 'high']
 
@@ -49,13 +44,6 @@ export function validate(patch, current = DEFAULTS) {
         if (typeof raw !== 'string') reject(key, '必须是字符串')
         else value.window = raw.trim()
         break
-      case 'preset':
-        if (!PRESETS[raw]) reject(key, `未知预设，可选：${Object.keys(PRESETS).join(' / ')}`)
-        else {
-          value.preset = raw
-          Object.assign(value, PRESETS[raw])
-        }
-        break
       case 'wakeGapSec': {
         const n = Number(raw)
         if (!Number.isInteger(n) || n < 0 || n > 300) reject(key, '必须是 0–300 的整数（秒；0 = 不说话）')
@@ -66,6 +54,12 @@ export function validate(patch, current = DEFAULTS) {
         const n = Number(raw)
         if (!Number.isInteger(n) || n < 0 || n > 1440) reject(key, '必须是 0–1440 的整数（分钟，0 = 不因空闲收工）')
         else value.idleStopMin = n
+        break
+      }
+      case 'fps': {
+        const n = Number(raw)
+        if (!Number.isInteger(n) || n < 1 || n > 30) reject(key, '必须是 1–30 的整数')
+        else value.fps = n
         break
       }
       case 'quality':
