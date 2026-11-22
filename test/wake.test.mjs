@@ -286,7 +286,7 @@ test('说话那条必带提示词（每 30 秒一次，不是每条都带）', a
   await w.maybeWake({ kind: 'motion', strength: 'high', text: '切镜' })
   const j = JSON.parse(sent[0])
   assert.match(j.prompt, /必须有自己思考/, '说话那条没带提示词')
-  assert.ok(j.events.some((e) => e['字'] === '别开窗'), '数据没带上')
+  assert.ok(j.events.some((e) => e.sub === '别开窗'), '数据没带上')
 })
 
 test('introText 仍是那段规则原文（保留给"想单独发一次"的用法）', () => {
@@ -317,7 +317,7 @@ test('观察轮最多带 12 条，多出来的只报数量', async () => {
   const j = JSON.parse(sent[0])
   assert.equal(j.events.length, 12)
   assert.equal(j.omitted, 18)
-  assert.equal(j.events.at(-1)['字'], '第29句', '应该保留最新的，丢弃最旧的')
+  assert.equal(j.events.at(-1).sub, '第29句', '应该保留最新的，丢弃最旧的')
 })
 
 test('JSON 是紧凑的（不缩进），省掉约四分之一字节', async () => {
@@ -326,4 +326,24 @@ test('JSON 是紧凑的（不缩进），省掉约四分之一字节', async () 
   w.feed({ kind: 'ocr', text: '别开窗', at: Date.now() })
   await w.observe()
   assert.ok(!sent[0].includes('\n'), '还在缩进，白白多占 25% 体积')
+})
+
+test('事件键名是英文三选一：say / sub / motion（没有 cut）', () => {
+  const now = Date.now()
+  const items = [
+    { kind: 'speech', text: 'a', at: now },
+    { kind: 'ocr', text: 'b', at: now },
+    { kind: 'motion', text: '切镜', at: now },
+  ]
+  // packEvent 不导出，从 observe 的消息里读回来
+  return (async () => {
+    const sent = []
+    const w = createWaker({ enabled: true, gapSec: 30, promptTemplate: 'r', send: async (t) => sent.push(t) })
+    for (const it of items) w.feed(it)
+    await w.observe()
+    const j = JSON.parse(sent[0])
+    const keys = j.events.map((e) => Object.keys(e).filter((k) => k !== 'at' && k !== 'sheetId')[0])
+    assert.deepEqual(keys, ['say', 'sub', 'motion'])
+    assert.equal(keys.includes('切'), false, 'cut 是死字段，不该出现')
+  })()
 })

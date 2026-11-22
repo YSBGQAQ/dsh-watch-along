@@ -115,7 +115,9 @@ export function createWaker({
    * strength 也去掉了 —— 它只用于本地挑事件，写进消息对模型没有用处。
    */
   function packEvent(e) {
-    const key = { speech: '说', ocr: '字', motion: '画', cut: '切' }[e.kind] ?? '事'
+    // 英文键名：say=台词（听写）、sub=字幕（OCR）、motion=画面变化。
+    // 没有 cut：事件只有这三种 kind，切镜的信息本来就在 text 里（"切镜"）。
+    const key = { speech: 'say', ocr: 'sub', motion: 'motion' }[e.kind] ?? 'event'
     const item = {}
     item.at = typeof e.at === 'number' ? new Date(e.at).toTimeString().slice(0, 8) : null
     item[key] = e.text != null ? String(e.text) : ''
