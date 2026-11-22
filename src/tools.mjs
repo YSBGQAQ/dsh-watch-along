@@ -15,6 +15,34 @@ function savePng(shot, seq, dir) {
 export function createTools({ service, listWindows, attachments = null, outDir = RUN_DIR, onAgent = null, serviceStatus = null, defaultWindow = '' }) {
   let seq = 0
 
+  /**
+   * 最近 N 秒的完整快照：字幕 + 听写 + 变化次数。
+   *
+   * 为什么要它：模型一次调用就该拿到"此刻全部内容"——只给图看不到台词，
+   * 只给文字看不到画面，两边都残。
+   */
+  let latestSheetId = null
+  async function recentSnapshot(lastSec = 30) {
+    const sec = Number.isFinite(lastSec) && lastSec > 0 ? lastSec : 30
+    try {
+      const got = await service.events({ lastSec: sec, limit: 200 })
+      const list = got?.events ?? []
+      // 每条都带"什么时候"：只有文字没有时间，模型就分不清"刚说的"和"一分钟前说的"
+      const at = (e) => ({
+        t: typeof e.t === 'number' ? Math.round(e.t * 10) / 10 : null,
+        clock: typeof e.at === 'number' ? new Date(e.at).toTimeString().slice(0, 8) : null,
+        text: e.text,
+      })
+      const ocr = list.filter((e) => e.kind === 'ocr' && e.text).map(at)
+      const speech = list.filter((e) => e.kind === 'speech' && e.text).map(at)
+      const motion = list.filter((e) => e.kind === 'motion').length
+      const sheet = [...list].reverse().find((e) => e.sheetId)?.sheetId ?? latestSheetId
+      return { seconds: sec, sheetId: sheet, ocr, speech, motionCount: motion }
+    } catch (e) {
+      return { seconds: sec, error: String(e?.message ?? e) }
+    }
+  }
+
   /** 服务没起来时必须**说出来**：否则用户看到的是"AI 不听声音"，查半天才知道服务没开。 */
   async function serviceWarnings() {
     if (!serviceStatus) return []
@@ -76,15 +104,20 @@ export function createTools({ service, listWindows, attachments = null, outDir =
     {
       name: 'watch_frame',
       description:
-        '取**当前这一帧**画面（PNG 落盘并返回路径与尺寸）。\n' +
+        '取**当前这一帧**画面（PNG 落盘），并**同时带回最近 N 秒的字幕与听写**——\n' +
+        '一次调用就能拿到"此刻完整内容"：画面、OCR 字幕、ASR 听写，每条都带时刻。\n' +
         '只适合回答"现在画面是什么"。问"**刚才/刚刚**说了什么、发生了什么"要用 watch_events（它有带时间的历史），' +
         '单看一帧看不到过去。',
       parameters: {
         live: { type: 'boolean', description: 'true = 现在就抓一张（默认 true）' },
         sheetId: { type: 'string', description: '取事件里带的那张拼图；给了就不重新抓屏' },
+        lastSec: { type: 'number', description: '附带最近 N 秒的字幕/听写，默认 30' },
       },
       async execute(args = {}) {
         const shot = await service.frame({ live: args.live !== false, sheetId: args.sheetId ?? null })
+        // **一次调用给全**：图 + 最近 N 秒的字幕与听写。
+        // 只给图的话，模型看得到画面、读不到台词；只给文字则相反，两边都残。
+        const recent = await recentSnapshot(args.lastSec)
         seq += 1
         const file = savePng(shot, seq, outDir)
         const { ref, via, attachmentError } = await deliver(shot.png, `watch-along-${seq}.png`)
@@ -98,6 +131,7 @@ export function createTools({ service, listWindows, attachments = null, outDir =
           file,
           ref,
           via,
+          recent, // 同一时间窗内的字幕与听写，一次给全
           ...(attachmentError ? { attachmentError } : {}),
         }
       },
@@ -123,10 +157,14 @@ export function createTools({ service, listWindows, attachments = null, outDir =
         // 默认 0：长轮询会让模型「每有动静就回一句」地自转起来
         // （实测 3 分钟 70 多轮、每轮 32K token）
         const waitSec = Number.isFinite(args.wait) ? Math.max(0, args.wait) : 0
-        return service.events({
+        const ev = await service.events({
           sinceId: Number.isFinite(args.sinceId) ? args.sinceId : null,
           waitMs: Math.round(waitSec * 1000),
+          lastSec: Number.isFinite(args.lastSec) ? Math.max(0, args.lastSec) : 0,
         })
+        // 顺手记下最新拼图编号：模型下一次要"看画面"时不必再翻一遍事件
+        for (const e of ev?.events ?? []) if (e?.sheetId) latestSheetId = e.sheetId
+        return { ...ev, latestSheetId: latestSheetId ?? null }
       },
     },
     {

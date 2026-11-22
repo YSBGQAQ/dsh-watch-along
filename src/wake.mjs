@@ -28,17 +28,20 @@ export function isTrigger(event) {
  * 把最近一段时间的事件压成一段摘要：先按强度降序，再按时间倒序，最多 `max` 条。
  * 口播原话是「给排序后的摘要，措辞交给模型」——所以这里只挑，不改写。
  */
-export function buildSummary(events, { now, windowMs, max, format }) {
+export function buildSummary(events, { now, windowMs, max, format = formatEvent }) {
   const fresh = (events ?? []).filter(
     (e) => e && typeof e.at === 'number' && now - e.at <= windowMs,
   )
   if (!fresh.length) return ''
   const picked = fresh
     .slice()
+    // 选人按强度（票面要求保留哪些事件），**输出按时间正序** ——
+    // 给模型看的是一段经过，乱序会让它把因果说反（把"别开窗"当成切镜之后的话）。
+    // 选人：强度高的先占位，同强度取**最近**的
     .sort((a, b) => strengthRank(b.strength) - strengthRank(a.strength) || b.at - a.at)
-    // 票面验收写的是「按 strength 排序」，所以**不**再改回时间正序：
-    // 选人靠强度，输出也得按强度，否则验收那条对不上。
     .slice(0, max)
+    // 输出：按时间正序 —— 给模型看的是一段经过，乱序会把因果说反
+    .sort((a, b) => a.at - b.at)
   return picked.map((e) => format(e)).join('\n')
 }
 
@@ -62,19 +65,33 @@ export function renderPrompt(template, gapSec) {
   return t.replace(/\{n\}/g, String(gapSec))
 }
 
+/**
+ * 一条事件怎么变成一行字：带绝对时刻、相对秒数，并标出是画面/字幕/声音。
+ *
+ * 没有时间戳，模型分不清"刚发生"还是"三分钟前"，评价就会把早就不在画面上的人当成主角。
+ */
+export function formatEvent(e) {
+  const t = typeof e?.t === 'number' ? `${e.t.toFixed(1)}s` : ''
+  const clock = typeof e?.at === 'number' ? new Date(e.at).toTimeString().slice(0, 8) : ''
+  const when = [clock, t].filter(Boolean).join(' / ')
+  const label = { motion: '画面', ocr: '字幕', speech: '声音', cut: '切镜' }[e?.kind] ?? e?.kind ?? '事件'
+  return `- ${when ? `[${when}] ` : ''}${label}：${e?.text ?? ''}`.trim()
+}
+
 export function createWaker({
   send, // async (text: string) => void —— 真正往会话塞消息的那一步
   now = Date.now,
   minGapMs = 120_000,
   promptTemplate = DEFAULT_COMMENT_PROMPT, // 设置里的「陪聊提示词」
   gapSec = 30, // 用于把模板里的 {n} 换成实际秒数
+  sheetId = () => null, // 最近一张拼图的编号（可能没有）
   maxMisses = 5,
   summaryWindowMs = 180_000,
   summaryMax = 20,
   enabled = false,
   log = () => {},
   hasUserMessageSince = null, // async (ts) => boolean；拿不到就传 null
-  format = (e) => `- ${e.text ?? e.kind ?? '事件'}`,
+  format = formatEvent,
 } = {}) {
   let events = []
   let lastWakeAt = 0
@@ -123,9 +140,26 @@ export function createWaker({
     // 2026-11-22 之前的写法是「只说了这一句就够，别复述整段」，
     // 结果它真的每帧碎碎念一句（三分钟七十多轮），和"影评人式陪聊"正好相反。
     const head = renderPrompt(promptTemplate, gapSec)
+    // 带上拼图编号：光有文字，模型只能评价"发生了什么"；看了图才能谈镜头与表演。
+    // 这是 see-now 的 peek 模式（叫醒 → 先取图 → 再说）。
+    const sid = (() => {
+      try {
+        return sheetId?.() ?? null
+      } catch {
+        return null
+      }
+    })()
+    const seeFirst = sid
+      ? `\n\n这一段有一张拼图（sheetId=${sid}）。**先调 watch_frame({sheetId:"${sid}"}) 看一眼画面**，再开口。`
+      : ''
+    // 时间感：绝对时钟 + 本次已进行多久。模型没有内部时钟，不写就只会说"刚才"。
+    const clockNow = new Date(now()).toTimeString().slice(0, 8)
+    const maxT = events.reduce((m, e) => (typeof e.t === 'number' && e.t > m ? e.t : m), 0)
+    const elapsed = maxT ? `，本次陪看已进行 ${Math.floor(maxT / 60)} 分 ${Math.round(maxT % 60)} 秒` : ''
+    const when = `现在 ${clockNow}${elapsed}`
     const prompt = text
-      ? `${head}\n\n过去 ${gapSec} 秒屏幕上发生的：\n${text}`
-      : `${head}\n\n（过去 ${gapSec} 秒没有可复述的新内容，安静陪着就好，不用开口。）`
+      ? `${head}\n\n${when}。过去 ${gapSec} 秒屏幕上发生的（方括号里是时刻 / 相对秒数）：\n${text}${seeFirst}`
+      : `${head}\n\n（过去 ${gapSec} 秒没有可复述的新内容，安静陪着就好，不用开口。）${seeFirst}`
     try {
       await send(prompt)
     } catch (e) {

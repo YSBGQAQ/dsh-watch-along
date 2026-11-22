@@ -159,8 +159,10 @@ test('摘要：只取最近 3 分钟、最多 20 条、按强度排序', () => {
   const lines = s.split('\n')
   assert.equal(lines.length, 20, `条数不对：${lines.length}`)
   assert.ok(!lines.includes('旧事件'), '窗口外的事件混进来了')
-  // 票面验收写的是「按 strength 排序」：第一条必须是高强度的最新那条
-  assert.equal(lines[0], 'e0', `首条不是高强度最新事件，实际是 ${lines[0]}`)
+  // 选人按强度（票面要求），但输出按时间正序 —— 给模型看的是一段经过。
+  // 所以 newest 的 e0 应当在最后，且它必须被选中（它是 high）
+  assert.equal(lines[lines.length - 1], 'e0', `最新那条不在末尾，实际是 ${lines[lines.length - 1]}`)
+  assert.ok(lines.includes('e0'), 'high 强度的事件没被选中')
 })
 
 test('摘要按强度优先挑：high 先占位，剩下的按时间取最近的', () => {
@@ -206,4 +208,43 @@ test('{n} 会被替换成实际秒数，且能换多次', () => {
   assert.equal(renderPrompt('过去 {n} 秒，再看这 {n} 秒', 30), '过去 30 秒，再看这 30 秒')
   assert.equal(renderPrompt('没有占位符', 15), '没有占位符')
   assert.equal(renderPrompt('', 30), DEFAULT_COMMENT_PROMPT.replace(/\{n\}/g, '30'), '空模板要回默认值')
+})
+
+test('唤醒消息带上拼图编号，并要求先看一眼再开口', async () => {
+  const sent = []
+  const w = createWaker({
+    enabled: true,
+    minGapMs: 0,
+    gapSec: 30,
+    promptTemplate: '你是搭子',
+    sheetId: () => 'SHEET_123',
+    send: async (t) => sent.push(t),
+    format: (e) => `- ${e.text}`,
+  })
+  await w.maybeWake({ kind: 'motion', strength: 'high', text: '切镜' })
+  assert.equal(sent.length, 1)
+  assert.match(sent[0], /sheetId=SHEET_123/)
+  assert.match(sent[0], /先调 watch_frame/)
+})
+
+test('没有拼图时不硬塞那句提示', async () => {
+  const sent = []
+  const w = createWaker({ enabled: true, minGapMs: 0, promptTemplate: '你是搭子', sheetId: () => null, send: async (t) => sent.push(t) })
+  await w.maybeWake({ kind: 'motion', strength: 'high', text: '切镜' })
+  assert.doesNotMatch(sent[0], /watch_frame/)
+})
+
+test('摘要按时间正序、每条标来源、带时刻', () => {
+  const now = Date.now()
+  const text = buildSummary(
+    [
+      { kind: 'speech', text: '这风不对啊', strength: 'medium', t: 746, at: now - 1000 },
+      { kind: 'motion', text: '切镜', strength: 'high', t: 742.5, at: now - 4000 },
+    ],
+    { now, windowMs: 60_000, max: 10, format: undefined },
+  )
+  const lines = text.split('\n')
+  assert.match(lines[0], /画面：切镜/, '顺序或来源标错了')
+  assert.match(lines[1], /声音：这风不对啊/)
+  assert.ok(lines[0].includes('742.5s'), '缺相对秒数')
 })

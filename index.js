@@ -300,6 +300,7 @@ export function apply(ctx, opts = {}) {
   let watchLoop = null
   let eventSeq = 0
   let lastWokeSeq = 0
+  let lastSheet = null // 最近一张拼图的编号，唤醒时交给模型看图
   if (wakeEnabled) {
     waker = createWaker({
       enabled: true,
@@ -308,6 +309,7 @@ export function apply(ctx, opts = {}) {
       // 两边都设间隔会互相打架：0 表示不在这里节流。
       minGapMs: 0,
       promptTemplate: cur.commentPrompt,
+      sheetId: () => lastSheet,
       gapSec: cur.wakeGapSec ?? 30,
       // send 失败只是这一拍没叫，不能影响陪看；waker 内部会捕获并记日志。
       // 投递走 agent.followup + sessions.flush（见 agent-delivery.mjs）。
@@ -367,6 +369,7 @@ export function apply(ctx, opts = {}) {
     onEvent: (kind, payload) => {
       if (!waker) return
       if (videoOff && kind === 'motion') return // 画面通道关闭：motion 一律不投
+      if (payload?.sheetId) lastSheet = payload.sheetId
       eventSeq += 1
       waker.feed({ kind, ...payload })
       // 语音事件说明有人在说话，但不等于"用户回应了我们"—— 这里不归零，交给历史判定
