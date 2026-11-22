@@ -32,8 +32,7 @@ let asrFirst = true
 let sessionStamp = null
 function listen(seconds) {
   // 第一次请求顺带让服务清空缓冲：否则上一场陪看的尾巴会串到这一场来。
-  // 第一次请求顺带让服务清空缓冲并把本轮写到独立文件（session 由 watch_start 生成）
-  if (asrFirst) SESSION = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '')
+  // SESSION 在 watch_start 时就换好了（见 onWatchStart），这里不再现算。
   const body = JSON.stringify({ seconds, reset: asrFirst, session: SESSION })
   asrFirst = false
   return new Promise((resolve, reject) => {
@@ -470,6 +469,11 @@ export function apply(ctx, opts = {}) {
       waker?.reset()
       composeOk = 0
       composeFail = 0
+      // 每一场陪看换一个会话号，并让 ASR 下一拍 reset：清缓冲、时间原点归零、独立文件。
+      // 以前 asrFirst 只在**进程生命周期**里重置一次，第二场开始 ASR 的时钟接着上一场跑
+      // （2026-11-23 实测：31 分钟那轮整体偏了 88 秒，而且 31 分钟里又漂了 14%）。
+      SESSION = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '')
+      asrFirst = true
       // 懒取 sessionController：apply 时探是拿不到的（服务注册得比插件晚），
       // 所以改到真正要用的时候再取。有它才能自动开新会话（create / resolveAgent）。
       const sc = safe(() => ctx.get?.('sessionController'), null)

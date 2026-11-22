@@ -75,7 +75,29 @@ ACC = {
     "last_chunk_at": 0.0,  # 最近一次拿到音频块的时刻；体检用，判断流是不是卡死了
     "rec": None,  # 当前打开的录音器；卡死时要靠它把流打断
     "source_note": None,  # 请求的来源用不上时的原因（回了整机）。给 /health 看，不许只在 stdout
+    # ── 墙上时钟锚点（2026-11-23）─────────────────────────────────────────
+    # 为什么需要：样本数并不等于真实时间。实测 31 分钟的一轮，音频游标跑了 35.5 分钟
+    # （每分钟 0.77–1.42 之间跳，累计 +14%），于是字幕和声音的时间轴对不上。
+    # 做法：每接一块音频就记一条 (缓冲位置, 墙上时间)，对外时间一律按锚点换算，
+    # 不再用 "样本数 / 采样率" 当时间。t_wall0 = 本场 reset 的时刻。
+    "marks": [],  # [(pos_after_append, wall_time)]，只留最近 90 秒
+    "t_wall0": 0.0,
 }
+
+MARKS_KEEP_SEC = 90.0
+
+
+def _wall_at(pos):
+    """缓冲位置 → 墙上时间（epoch 秒）。没有锚点就返回 None，由调用方兜底。"""
+    marks = ACC["marks"]
+    if not marks:
+        return None
+    # pos / end 都是**秒**（base + 样本数/采样率），别再除 RATE
+    for end, wall in marks:
+        if end >= pos:
+            return wall - (end - pos)
+    end, wall = marks[-1]
+    return wall - (end - pos)
 
 
 def _register_cuda_dlls():
@@ -170,6 +192,16 @@ def _ingest(chunk):
         return
     ACC["last_chunk_at"] = time.time()
     ACC["buf"] = np.concatenate([ACC["buf"], chunk])
+    # 记一条墙上时钟锚点：缓冲位置 → 收到这块音频的时刻。
+    # 块内的位置按采样率线性回推（块只有 0.25 秒，误差可忽略）。
+    pos = ACC["base"] + len(ACC["buf"]) / RATE
+    ACC["marks"].append((pos, ACC["last_chunk_at"]))
+    while ACC["marks"] and ACC["marks"][0][0] < pos - MARKS_KEEP_SEC:
+        ACC["marks"].pop(0)
+    # 没有 reset（直接重启服务就开始录）时，把时间原点定在第一块音频上，
+    # 免得 t 是个巨大的绝对时间戳。
+    if not ACC["t_wall0"]:
+        ACC["t_wall0"] = ACC["last_chunk_at"]
     # 原始 PCM 原样落盘：不受 KEEP_SEC 裁剪影响，事后可拿它和 mp3 做 A/B，
     # 分清「音频本身差」还是「实时管线处理差」。只 append 裸 s16le、不写 wav 头
     # —— 进程被强杀也不会损坏数据。
@@ -529,8 +561,13 @@ def pull():
         key = _norm(line["text"])
         if not key or _looks_hallucinated(line["text"]) or _is_dup(key):
             continue
-        done.append({"text": line["text"], "t0": round(t0, 2), "t1": round(t1, 2)})
-        _dump(line["text"], round(t0, 2), round(t1, 2))
+        # 对外时间按墙上时钟换算（见 ACC["marks"] 的注释）。换不到就退回样本数口径，
+        # 至少不会因为锚点缺失而整条丢掉。
+        w0, w1 = _wall_at(t0), _wall_at(t1)
+        o0 = round(w0 - ACC["t_wall0"], 2) if (w0 is not None and ACC["t_wall0"]) else round(t0, 2)
+        o1 = round(w1 - ACC["t_wall0"], 2) if (w1 is not None and ACC["t_wall0"]) else round(t1, 2)
+        done.append({"text": line["text"], "t0": o0, "t1": o1})
+        _dump(line["text"], o0, o1)
         ACC["seen"].append(key)
         if len(ACC["seen"]) > SEEN_MAX:
             ACC["seen"] = ACC["seen"][-SEEN_MAX:]
@@ -586,6 +623,8 @@ def reset(session=None):
     ACC["base"] = 0.0
     ACC["emitted_until"] = 0.0
     ACC["seen"] = []
+    ACC["marks"] = []
+    ACC["t_wall0"] = time.time()
     # 这里**不要**清 error：采集线程死了/卡住时它是唯一线索。清掉之后 /health
     # 显示一切正常，实际一字节没录到 —— 2026-11-22 正是这么被瞒过去的。
     try:
