@@ -40,21 +40,17 @@ test('窗口标题会被去空白', () => {
 })
 
 // ── 唤醒节奏三项（对齐 see-now 的 defaultPace / maxAutonomousWakes / idleStopMin）──
-test('wakeGapSec 是 5–300 的整数秒，默认 30', () => {
+test('wakeGapSec 是 0–300 的整数秒，0 = 不说话', () => {
   assert.equal(validate({ wakeGapSec: 45 }).value.wakeGapSec, 45)
-  assert.equal(validate({}).value.wakeGapSec, 30)
-  assert.equal(validate({ wakeGapSec: 4 }).ok, false)
+  assert.equal(validate({}).value.wakeGapSec, 30, '默认 30 秒')
+  assert.equal(validate({ wakeGapSec: 0 }).value.wakeGapSec, 0, '0 要能存下来（= 不说话）')
+  assert.equal(validate({ wakeGapSec: -1 }).ok, false)
   assert.equal(validate({ wakeGapSec: 301 }).ok, false)
   assert.equal(validate({ wakeGapSec: 12.5 }).ok, false)
 })
 
-test('maxWakes 边界：0–999 收，0 表示不限', () => {
-  assert.equal(validate({ maxWakes: 0 }).value.maxWakes, 0)
-  assert.equal(validate({ maxWakes: 999 }).ok, true)
-  assert.equal(validate({ maxWakes: -1 }).ok, false)
-  assert.equal(validate({ maxWakes: 1000 }).ok, false)
-  assert.equal(validate({ maxWakes: 3.5 }).ok, false)
-  assert.equal(validate({}).value.maxWakes, 0, '默认应该是不限')
+test('maxWakes 已经从设置里删掉（它当时是死代码）', () => {
+  assert.equal('maxWakes' in validate({}).value, false)
 })
 
 test('idleStopMin 允许 0（= 不因空闲收工），负数与超过一天要拒', () => {

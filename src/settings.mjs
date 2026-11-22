@@ -13,8 +13,7 @@ export const DEFAULTS = Object.freeze({
   speech: true,
   speechPerMin: 6,
   // 唤醒节奏（对齐 see-now，但节奏用秒数直接填，比三档更好控制）
-  wakeGapSec: 30, // 两次主动说话的最小间隔（秒），5–300
-  maxWakes: 0, // 一场陪看最多主动说几次；0 = 不限（只受间隔与空闲收工约束）
+  wakeGapSec: 30, // 两次主动说话的最小间隔（秒），0–300；**0 = 不说话，只采集**
   idleStopMin: 3, // 多久没人调工具就收工（分钟）；0 = 不因空闲收工
 
   host: '0.0.0.0',
@@ -59,14 +58,8 @@ export function validate(patch, current = DEFAULTS) {
         break
       case 'wakeGapSec': {
         const n = Number(raw)
-        if (!Number.isInteger(n) || n < 5 || n > 300) reject(key, '必须是 5–300 的整数（秒）')
+        if (!Number.isInteger(n) || n < 0 || n > 300) reject(key, '必须是 0–300 的整数（秒；0 = 不说话）')
         else value.wakeGapSec = n
-        break
-      }
-      case 'maxWakes': {
-        const n = Number(raw)
-        if (!Number.isInteger(n) || n < 0 || n > 999) reject(key, '必须是 0–999 的整数（0 = 不限）')
-        else value.maxWakes = n
         break
       }
       case 'idleStopMin': {

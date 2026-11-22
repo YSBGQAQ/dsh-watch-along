@@ -5,14 +5,13 @@
 //
 //   everyMs  本地 tick（默认 2 秒，纯算术，不碰模型）
 //   gapMs    两次唤醒的最小间隔（默认 30 秒，等于 watch-together 的 calm 档）
-//   maxWakes 连续叫了这么多次都没人接就收工（默认 8，同 see-now）
 //   idleMs   这么久没有任何工具调用就收工（默认 3 分钟，同 see-now 的 IDLE_STOP_MS）
 //
 // 三条规矩，缺一条就会出问题：
 //   1. **一次只允许一条在飞**：上一条叫醒之后模型没调过工具（noteActivity），就不叫下一条。
 //      不这么做会积出一串"有新画面了"，用户得一条条点掉（see-now 社区实报）。
 //   2. **没有新东西不叫**：hasNews() 为假就闭嘴，否则就是定时刷屏。
-//   3. **会自己收工**：叫满 maxWakes 次没人接、或 idleMs 内毫无动静，就停。
+//   3. **会自己收工**：idleMs 内毫无动静就停（没人理的陪伴该停）。
 
 export function createWatchLoop({
   wake, // async () => ({ok, reason?, ...})
@@ -21,7 +20,6 @@ export function createWatchLoop({
   now = Date.now,
   everyMs = 2000,
   gapMs = 30_000,
-  maxWakes = 8,
   idleMs = 3 * 60_000,
   setTimer = setInterval,
   clearTimer = clearInterval,
@@ -55,10 +53,9 @@ export function createWatchLoop({
   function noteActivity() {
     lastAckAt = now()
     inFlight = false
-    // 不清零：maxWakes 是"这一场总共最多主动说几次"（0 = 不限）。
-    // 为什么不做"连续 N 次没人接"：inFlight 已经保证了——没被接住就不会叫下一条，
-    // 所以"连续 N 次没人接"永远到不了 1 以上，那个参数是死代码（2026-11-22 被测试抓到）。
-    // "没人理"由 idleMs 管：3 分钟没有任何工具调用就收工。
+    // wakes 只做状态展示，不再当收工线。
+    // 曾经的 maxWakes（"连续 N 次没人接"）是死代码：inFlight 已经保证没被接住就不叫下一条，
+    // 计数永远到不了 2（2026-11-22 被测试抓到，已删）。真正的收工线是 idleMs。
   }
 
   /** 一次判定。返回 {fired, reason}；测试直接调它，不用等定时器。 */
@@ -85,8 +82,7 @@ export function createWatchLoop({
       return { fired: false, reason: `wake-failed:${r?.reason ?? '?'}` }
     }
     lastWakeAt = now()
-    wakes += 1
-    if (maxWakes > 0 && wakes >= maxWakes) stop('max-wakes') // 0 = 不限
+    wakes += 1 // 只用于状态展示（排查用），不再作为收工线
     return { fired: true, reason: 'woke', via: r.via, flushed: r.flushed }
   }
 
@@ -102,7 +98,7 @@ export function createWatchLoop({
     } catch {
       /* 不是 Node Timer 就算了 */
     }
-    log(`陪看循环已启动：每 ${everyMs}ms 判定一次，间隔 ${gapMs}ms，上限 ${maxWakes} 次`)
+    log(`陪看循环已启动：每 ${everyMs}ms 判定一次，间隔 ${gapMs}ms`)
     return true
   }
 

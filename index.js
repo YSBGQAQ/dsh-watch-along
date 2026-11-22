@@ -323,7 +323,6 @@ export function apply(ctx, opts = {}) {
     watchLoop = createWatchLoop({
       log: both,
       gapMs: (cur.wakeGapSec ?? 30) * 1000,
-      maxWakes: cur.maxWakes ?? 8,
       idleMs: idleMin === 0 ? Number.POSITIVE_INFINITY : idleMin * 60_000,
       everyMs: 2_000,
       hasNews: () => eventSeq > lastWokeSeq,
@@ -369,9 +368,15 @@ export function apply(ctx, opts = {}) {
     },
     onWatchStart: () => {
       waker?.reset()
+      lastWokeSeq = eventSeq
+      // 说话间隔填 0 = 不说话：只采集，不主动开口（票 07 的备注项）
+      if ((cur.wakeGapSec ?? 30) === 0) {
+        watchLoop?.stop('speak-off')
+        both('主动说话已关闭（说话间隔 = 0）：只采集，不主动开口')
+        return
+      }
       // 每一次 watch_start 都让循环重新起跑（含"上次已收工"的情况）
       watchLoop?.restart()
-      lastWokeSeq = eventSeq
     },
   })
 

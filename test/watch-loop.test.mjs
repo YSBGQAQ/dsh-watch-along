@@ -75,27 +75,6 @@ test('模型调了工具 = 接住了，可以继续叫', async () => {
   assert.equal(h.woke.length, 2)
 })
 
-test('说满 N 次就收工（总次数上限）', async () => {
-  const h = harness({ idleMs: 60 * 60_000, maxWakes: 3 })
-  for (let i = 0; i < 5; i++) {
-    await h.loop.tick()
-    h.loop.noteActivity()
-    h.advance(31_000)
-  }
-  assert.equal(h.loop.state.stopped, 'max-wakes')
-  assert.equal(h.woke.length, 3, `叫了 ${h.woke.length} 次`)
-})
-
-test('maxWakes = 0 表示不限：一直陪着也不收工', async () => {
-  const h = harness({ idleMs: 60 * 60_000, maxWakes: 0 })
-  for (let i = 0; i < 40; i++) {
-    await h.loop.tick()
-    h.loop.noteActivity()
-    h.advance(31_000)
-  }
-  assert.equal(h.loop.state.stopped, null)
-  assert.equal(h.woke.length, 40)
-})
 
 test('一直没有任何工具调用 → 3 分钟收工（用户睡着别吵）', async () => {
   const h = harness()
@@ -151,4 +130,15 @@ test('收工之后不再叫，且收工原因会回调出去', async () => {
   assert.equal(r.fired, false)
   assert.match(r.reason, /stopped:manual/)
   assert.deepEqual(reasons, ['manual'])
+})
+
+test('没有次数上限：有人接就一直能叫（收工只由 idle 决定）', async () => {
+  const h = harness({ idleMs: 60 * 60_000 })
+  for (let i = 0; i < 50; i++) {
+    await h.loop.tick()
+    h.loop.noteActivity()
+    h.advance(31_000)
+  }
+  assert.equal(h.loop.state.stopped, null)
+  assert.equal(h.woke.length, 50)
 })
