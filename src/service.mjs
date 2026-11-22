@@ -270,8 +270,20 @@ export function createWatchService({
   }
 
   /** 读事件。`waitMs > 0` 走长轮询，没事件就等到点返回 timedOut。 */
-  async function events({ sinceId = null, waitMs = 0, limit = 100 } = {}) {
-    if (waitMs > 0) return eventQueue.wait({ sinceId, waitMs, limit })
+  async function events({ sinceId = null, waitMs = 0, limit = 100, lastSec = 0 } = {}) {
+    if (waitMs > 0) {
+      const got = await eventQueue.wait({ sinceId, waitMs, limit })
+      if (!lastSec) return got
+      // "刚才/最近"类问题要的是时间窗，不是"从某条之后"。
+      // 事件自带 at（毫秒时间戳），按窗口筛一遍即可。
+      const floor = now() - lastSec * 1000
+      return { ...got, events: (got.events ?? []).filter((e) => (e.at ?? 0) >= floor) }
+    }
+    if (lastSec) {
+      const floor = now() - lastSec * 1000
+      const got = await eventQueue.read({ sinceId, limit })
+      return { ...got, events: (got.events ?? []).filter((e) => (e.at ?? 0) >= floor) }
+    }
     return { ...eventQueue.read({ sinceId, limit }), timedOut: false }
   }
 

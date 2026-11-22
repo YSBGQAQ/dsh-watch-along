@@ -76,7 +76,9 @@ export function createTools({ service, listWindows, attachments = null, outDir =
     {
       name: 'watch_frame',
       description:
-        '取一张当前画面（PNG 落盘并返回路径与尺寸）。想看细节时用；返回的是文件，不是像素。',
+        '取**当前这一帧**画面（PNG 落盘并返回路径与尺寸）。\n' +
+        '只适合回答"现在画面是什么"。问"**刚才/刚刚**说了什么、发生了什么"要用 watch_events（它有带时间的历史），' +
+        '单看一帧看不到过去。',
       parameters: {
         live: { type: 'boolean', description: 'true = 现在就抓一张（默认 true）' },
         sheetId: { type: 'string', description: '取事件里带的那张拼图；给了就不重新抓屏' },
@@ -103,10 +105,12 @@ export function createTools({ service, listWindows, attachments = null, outDir =
     {
       name: 'watch_events',
       description:
-        '读画面/字幕/声音的事件流。传上次拿到的 nextId 作 sinceId 续读；wait 秒数内没新事件会返回 timedOut。',
+        '读画面/字幕/声音的事件流，**带时间**。\n' +
+        '问"刚才/最近 N 秒"时用 lastSec（例如 lastSec: 10 取最近 10 秒）；续读用 sinceId。',
       parameters: {
         sinceId: { type: 'number', description: '上次收到的 nextId，首次不传' },
         wait: { type: 'number', description: '长轮询最多等几秒，默认 20' },
+        lastSec: { type: 'number', description: '只要最近 N 秒的事件（回答"刚才说了什么"用它）' },
       },
       async execute(args = {}) {
         const waitSec = Number.isFinite(args.wait) ? Math.max(0, args.wait) : 20

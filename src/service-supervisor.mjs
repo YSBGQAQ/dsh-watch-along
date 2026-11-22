@@ -11,7 +11,7 @@
 import http from 'node:http'
 import fs from 'node:fs'
 import path from 'node:path'
-import { spawn } from 'node:child_process'
+import { spawn, execFileSync } from 'node:child_process'
 import { DEFAULTS, loadSettings, saveSettings } from './settings.mjs'
 
 export const DEFAULT_PORTS = { ocr: 8765, asr: 8766, panel: 8790 }
@@ -179,7 +179,57 @@ export function createSupervisor({
     return { ok: true, started, note: started.length ? '已拉起，模型加载约 10–30 秒' : '' }
   }
 
-  /** 只绑 127.0.0.1 的面板接口：GET /status、POST /start。 */
+  /** 杀掉占用某端口的本机进程（重启服务用）。返回被杀掉的 pid 列表。 */
+  function killPort(port) {
+    const pids = new Set()
+    try {
+      if (process.platform === 'win32') {
+        const out = execFileSync('netstat', ['-ano'], { encoding: 'utf8' })
+        for (const line of out.split('\n')) {
+          if (!line.includes(`:${port}`) || !line.includes('LISTENING')) continue
+          const pid = line.trim().split(/\s+/).pop()
+          if (pid && pid !== '0') pids.add(pid)
+        }
+        for (const pid of pids) {
+          try {
+            execFileSync('taskkill', ['/F', '/PID', pid], { stdio: 'ignore' })
+          } catch {
+            /* 进程已经没了 */
+          }
+        }
+      } else {
+        const out = execFileSync('lsof', ['-ti', `:${port}`], { encoding: 'utf8' })
+        for (const pid of out.split('\n').map((x) => x.trim()).filter(Boolean)) {
+          pids.add(pid)
+          try {
+            process.kill(Number(pid), 'SIGTERM')
+          } catch {
+            /* 已经没了 */
+          }
+        }
+      }
+    } catch {
+      /* netstat/lsof 不可用就跳过：不阻塞启动流程 */
+    }
+    return [...pids]
+  }
+
+  /** 重启：杀掉两个端口上的进程，等一下端口释放，再按正常流程起。 */
+  async function restart() {
+    const killed = []
+    for (const port of [cfg.ports.ocr, cfg.ports.asr]) {
+      const pids = killPort(port)
+      if (pids.length) killed.push({ port, pids })
+    }
+    if (killed.length) {
+      log(`重启服务：先结束 ${killed.map((k) => `${k.port}(${k.pids.join(',')})`).join(' ')}`)
+      await new Promise((r) => setTimeout(r, 600))
+    }
+    const started = await start()
+    return { ...started, killed }
+  }
+
+  /** 只绑 127.0.0.1 的面板接口：GET /status、POST /start、POST /restart。 */
   function serve(port = cfg.ports.panel) {
     const server = http.createServer(async (req, res) => {
       // 面板在渲染进程里，跨源必须放开；但只绑回环，外部访问不到。
@@ -197,6 +247,7 @@ export function createSupervisor({
       try {
         if (req.url?.startsWith('/status')) return res.end(JSON.stringify(await status()))
         if (req.url?.startsWith('/start')) return res.end(JSON.stringify(await start()))
+        if (req.url?.startsWith('/restart')) return res.end(JSON.stringify(await restart()))
         if (req.url?.startsWith('/settings')) {
           const body = req.method === 'POST' ? await readBody(req) : null
           const r = handleSettings({ file: settingsFile, method: req.method, body })
@@ -220,5 +271,5 @@ export function createSupervisor({
     return server
   }
 
-  return { status, start, serve, config: cfg }
+  return { status, start, restart, serve, config: cfg }
 }

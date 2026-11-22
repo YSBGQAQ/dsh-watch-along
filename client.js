@@ -150,6 +150,10 @@ window.__ModuleLoader__.load({
       const [st, setSt] = React.useState(null)
       const [busy, setBusy] = React.useState(false)
       const [msg, setMsg] = React.useState('')
+      // 刚点过启动/重启：这段时间内不要报红 —— 模型加载要 10–30 秒，
+      // 期间 /health 连不上是正常的（这正是"服务起来了界面还报错"的来源）。
+      const [startingAt, setStartingAt] = React.useState(0)
+      const [slow, setSlow] = React.useState(false)
 
       const load = () => {
         fetch(PANEL_API + '/status')
@@ -157,29 +161,35 @@ window.__ModuleLoader__.load({
           .then(setSt)
           .catch(() => setSt({ error: '连不上面板接口（8790）。插件可能没启动。' }))
       }
+      // 打开面板立刻检测一次，然后每 2 秒一次（原 5 秒太钝，起完服务要等半天才变绿）
       React.useEffect(() => {
         load()
-        const t = setInterval(load, 5000)
+        const t = setInterval(load, 2000)
         return () => clearInterval(t)
       }, [])
 
-      const startServices = () => {
+      const act = (path, label) => {
         setBusy(true)
-        setMsg('正在启动，模型加载约 10–30 秒…')
-        fetch(PANEL_API + '/start', { method: 'POST' })
+        setStartingAt(Date.now())
+        setMsg(label + '，模型加载约 10–30 秒…')
+        fetch(PANEL_API + path, { method: 'POST' })
           .then((r) => r.json())
           .then((r) => {
-            setMsg(r.ok ? (r.note || '已启动') : ('启动失败：' + (r.error || '未知原因')))
+            setMsg(r.ok ? (r.note || '已发起') : ('失败：' + (r.error || '未知原因')))
             setTimeout(load, 1500)
           })
-          .catch((e) => setMsg('启动失败：' + String(e && e.message ? e.message : e)))
+          .catch((e) => setMsg('失败：' + String(e && e.message ? e.message : e)))
           .finally(() => setBusy(false))
       }
+      const startServices = () => act('/start', '正在启动')
+      const restartServices = () => act('/restart', '正在重启')
 
       if (!st) return h('div', { style: styles.card }, '读取服务状态…')
       if (st.error) return h('div', { style: styles.card }, st.error)
 
       const down = (st.services || []).filter((x) => !x.up)
+      // 30 秒宽限：刚发过启动/重启就不再喊"未启用"
+      const warming = startingAt && Date.now() - startingAt < 30_000
       return h('div', { style: styles.card },
         (st.services || []).map((x) =>
           h('div', { key: x.id, style: { display: 'flex', gap: 8, padding: '2px 0' } },
@@ -187,9 +197,13 @@ window.__ModuleLoader__.load({
             h('span', { style: { flex: '0 0 auto', width: 150 } }, x.name),
             h('span', { style: { opacity: 0.6, flex: 1 } },
               x.up ? ('端口 ' + x.port + (x.detail ? ' · ' + x.detail : '')) : ('未启动 · 端口 ' + x.port + (x.error ? ' · ' + x.error : ''))))),
-        down.length
-          ? h('div', { style: { marginTop: 8, color: '#c0392b', fontWeight: 600 } }, '服务未启用：' + down.map((x) => x.name).join('、'))
-          : h('div', { style: { marginTop: 8, opacity: 0.6 } }, '两个服务都在运行。'),
+        down.length === 0
+          ? h('div', { style: { marginTop: 8, opacity: 0.6 } }, '两个服务都在运行。')
+          : warming
+            ? h('div', { style: { marginTop: 8, color: '#b8860b', fontWeight: 600 } },
+                '正在启动：' + down.map((x) => x.name).join('、') + '（模型加载中，稍等）')
+            : h('div', { style: { marginTop: 8, color: '#c0392b', fontWeight: 600 } },
+                '服务未启用：' + down.map((x) => x.name).join('、')),
         st.configured === false
           ? h('div', { style: { marginTop: 6, fontSize: 12, opacity: 0.8 } },
               '缺配置：' + (st.missing || []).join('；') + '（设好环境变量后重启 DSH）')
@@ -200,11 +214,21 @@ window.__ModuleLoader__.load({
             disabled: busy || st.configured === false || down.length === 0,
             onClick: startServices,
             style: {
-              padding: '5px 12px', borderRadius: 6, cursor: 'pointer', fontSize: 13,
+              padding: '5px 12px', borderRadius: 6, cursor: 'pointer', fontSize: 13, marginRight: 8,
               border: '1px solid rgba(127,127,127,.35)', background: 'transparent', color: 'inherit',
               opacity: busy || st.configured === false || down.length === 0 ? 0.45 : 1,
             },
-          }, busy ? '启动中…' : (down.length ? '启动服务' : '都已在运行'))),
+          }, busy ? '启动中…' : (down.length ? '启动服务' : '都已在运行')),
+          h('button', {
+            type: 'button',
+            disabled: busy || st.configured === false,
+            onClick: restartServices,
+            style: {
+              padding: '5px 12px', borderRadius: 6, cursor: 'pointer', fontSize: 13,
+              border: '1px solid rgba(127,127,127,.35)', background: 'transparent', color: 'inherit',
+              opacity: busy || st.configured === false ? 0.45 : 1,
+            },
+          }, '重启服务')),
         msg ? h('div', { style: { marginTop: 6, fontSize: 12, opacity: 0.75 } }, msg) : null)
     }
 
