@@ -11,6 +11,7 @@ import { createPipeline } from './vendor/dsh-see-now-main/src/pipeline.js'
 import { createSubtitleReader } from './src/ocr.mjs'
 import { createSpeechReader } from './src/speech.mjs'
 import { createMobileServer } from './src/http.mjs'
+import { createWaker } from './src/wake.mjs'
 import crypto from 'node:crypto'
 import { defineToolCompat } from './vendor/dsh-see-now-main/src/define-tool.js'
 import http from 'node:http'
@@ -185,6 +186,45 @@ export function apply(ctx, opts = {}) {
     /* 清理失败不该阻止插件启动 */
   }
 
+  // ── 票 11：主动唤醒（默认关）──────────────────────────────────────────
+  // 判定层在 src/wake.mjs（可全量单测），这里只负责"接到宿主的会话"。
+  // 宿主能力拿不到就整条降级：只打一行日志，工具与三条通道照常。
+  const wakeEnabled = String(process.env.WATCH_ALONG_WAKE ?? '') === '1'
+  const sessionCtl = (() => {
+    try {
+      return ctx.get?.('sessionController') ?? null
+    } catch {
+      return null
+    }
+  })()
+  log(`主动唤醒：${wakeEnabled ? '开' : '关'}（WATCH_ALONG_WAKE=1 打开）；sessionController=${sessionCtl ? '有' : '无'}`)
+
+  async function targetSessionId() {
+    if (ctx.sessionId) return ctx.sessionId // 插件若被按会话实例化，这里直接就有
+    if (!sessionCtl?.list) return null
+    const rows = await sessionCtl.list({}, new AbortController().signal)
+    const arr = Array.isArray(rows) ? rows : (rows?.sessions ?? rows?.items ?? [])
+    const first = arr?.[0]
+    return first?.id ?? first?.sessionId ?? null
+  }
+
+  let waker = null
+  if (wakeEnabled && sessionCtl) {
+    waker = createWaker({
+      enabled: true,
+      log,
+      // 发不出去只是这一拍没叫，不能影响陪看；waker 内部会捕获并记日志
+      send: async (text) => {
+        const sessionId = await targetSessionId()
+        if (!sessionId) throw new Error('拿不到会话 id（ctx.sessionId 与 sessionController.list() 都没给）')
+        await sessionCtl.prompt({ sessionId, content: [{ type: 'text', text }] })
+      },
+      // 读会话历史那一步的字段形状还没在真机确认（票 11「两个未验的事实」第 2 条）。
+      // 传 null = waker 走保守分支：不计数，只保留主动唤醒、不自动停。
+      hasUserMessageSince: null,
+    })
+  }
+
   const service = createWatchService({
     listWindows,
     lookupWindow,
@@ -196,6 +236,13 @@ export function apply(ctx, opts = {}) {
     createPipeline: () =>
       createPipeline({ width: 798, height: 450, fps: 8, changeLog: true, changeLogMax: 500 }),
     onCaptureStderr: (s) => log(`ffmpeg: ${String(s).trim().slice(0, 300)}`),
+    onEvent: (kind, payload) => {
+      if (!waker) return
+      waker.feed({ kind, ...payload })
+      // 语音事件说明有人在说话，但不等于"用户回应了我们"—— 这里不归零，交给历史判定
+      void waker.maybeWake({ kind, ...payload })
+    },
+    onWatchStart: () => waker?.reset(),
   })
 
   const tools = createTools({

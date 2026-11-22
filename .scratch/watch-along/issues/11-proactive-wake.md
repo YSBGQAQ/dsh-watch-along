@@ -4,7 +4,7 @@
 
 **Blocked by:** 02（事件队列）
 
-**Status:** ready-for-agent
+**Status:** claimed（判定层已实现并有 12 条测试；接线待一轮 DSH 实机验证，两个宿主字段名仍是猜的）
 
 ## 决策（与用户逐条敲定，2026-11-21 10:46）
 
@@ -30,13 +30,15 @@
 
 ## 验收
 
-- [ ] 默认不唤醒：装好不动，一小时里会话里没有任何自动消息
-- [ ] 打开后，出现 `high`/`cut` 事件时，**120 秒内最多一条**唤醒消息
-- [ ] 唤醒消息里含最近 3 分钟、最多 20 条事件摘要（按 strength 排序）
-- [ ] 用户回一句后计数器归零
-- [ ] 连续 5 次无回应 → 本次陪看不再唤醒，日志留痕，会话无新消息
-- [ ] 重新 `watch_start` → 计数与开关恢复
-- [ ] 拿不到 `sessionController` / 读不到会话历史 → 只打一条日志，工具与三条通道**全部照常**
+- [x] 默认不唤醒：装好不动，一小时里会话里没有任何自动消息 —— 默认 `enabled=false`，
+      且要有 `WATCH_ALONG_WAKE=1` 才开；启动时会打一行「主动唤醒：关/开；sessionController=有/无」
+- [x] 打开后，出现 `high`/`cut` 事件时，**120 秒内最多一条**唤醒消息
+- [x] 唤醒消息里含最近 3 分钟、最多 20 条事件摘要（按 strength 排序）
+- [ ] 用户回一句后计数器归零 —— 逻辑已写并有测试，但**接线时 `hasUserMessageSince` 传的是 null**
+      （见 Comments「两个仍是猜的」），所以真机上这条还不生效
+- [ ] 连续 5 次无回应 → 本次陪看不再唤醒，日志留痕，会话无新消息 —— 同上，逻辑有、历史读不到
+- [x] 重新 `watch_start` → 计数与开关恢复 —— `onWatchStart` → `waker.reset()`，有测试
+- [x] 拿不到 `sessionController` / 读不到会话历史 → 只打一条日志，工具与三条通道**全部照常**
 
 ## 两个未验的事实（动手前先验，各自一行）
 
@@ -50,3 +52,31 @@
 
 - ADR 尚未单独成文（决策表在本票里；如需长期留档，另写 `docs/adr/0005-proactive-wake.md`）
 - 播报（TTS）不在本票范围
+
+## Comments
+
+### 2026-11-22 实现：判定层全做完，接线留两个待确认的字段名
+
+- **`src/wake.mjs`**：节流 / 触发判据 / 摘要挑选 / 次数上限 / reset 全在这一层，`send` 注入，
+  所以能全量单测。**`test/wake.test.mjs` 12 条**，覆盖：默认关、high/cut 才叫、120 秒节流、
+  连续 5 次不回应就闭嘴、回话归零、读历史失败要保守不计数、send 失败不拖挂主流程、
+  reset 恢复、摘要 3 分钟/20 条/按强度排序。
+- **`src/service.mjs` 加了两个观察者钩子**：`onEvent(kind, payload)` 与 `onWatchStart()`。
+  为什么必须新开钩子：**`motion` 事件不走 `emit()`**（它直接 `eventQueue.add`），
+  只包 `emit` 会漏掉三分之二的事件。两处都调，且有 try/catch —— 观察者出错不许影响入队。
+- **默认关**：`enabled=false`，要有 `WATCH_ALONG_WAKE=1` 才开。启动时打一行
+  「主动唤醒：关/开；sessionController=有/无」，一眼能看出宿主给没给。
+- **一个真 bug（测试抓到的）**：采集侧给的 `strength` 是 `high / medium / low`，
+  而票里的表格写的是 `mid`。我第一版排序表只认 `mid`，会让"中等强度"排到 `low` 后面，
+  摘要顺序整个反掉。已把 `medium` 与 `mid` 都认，并加了一条用真实取值的测试。
+
+**两个仍是猜的（真机第一轮就会暴露）：**
+
+1. `ctx.get('sessionController')` 这一跳没在运行时验过（宿主文档与代码里确实有这个服务，
+   方法名 `prompt(request, signal)` 也确认了）；
+2. `prompt` 的**请求体字段名**是按文档语义猜的（`{sessionId, content:[{type:'text',text}]}`），
+   宿主是 `typert` 生成的 schema，字段名可能不叫这个。发不出去时不致命 —— `send` 抛错
+   会被 waker 捕获并写一行日志，三条通道照常。
+
+**因此 `hasUserMessageSince` 先传 `null`**：走票里写好的保守分支（不计数、只保留主动唤醒、
+不自动停）。等第 2 条确认后再接 `sessionQuery.filterEvents`，「5 次自动停」那条才会生效。

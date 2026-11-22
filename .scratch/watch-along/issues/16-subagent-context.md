@@ -5,7 +5,7 @@
 
 **Blocked by:** 03
 
-**Status:** ready-for-agent
+**Status:** resolved（2026-11-22 用户决定**本轮暂不做**：能力已静态核实可行，排在票 11 与票 09 之后再说）
 
 参考：`vendor/dsh-see-now-main/docs/subagent-context.md`（含实测数据与失败边界）
 

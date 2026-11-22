@@ -63,6 +63,11 @@ export function createWatchService({
   fps = 8,
   now = Date.now,
   onCaptureStderr = null,
+  // 观察者（票 11 主动唤醒用）：三类事件入队时各通知一次，**不许影响事件入队**。
+  // motion 不走 emit()，所以两处都调。
+  onEvent = null,
+  // 每次 start() 成功后调一次：新一轮陪看要把唤醒的计数/缓冲重置。
+  onWatchStart = null,
 } = {}) {
   if (typeof encode !== 'function') throw new Error('createWatchService 需要注入 encode（PNG 编码器）')
 
@@ -199,7 +204,13 @@ export function createWatchService({
             // **不能**用 sheet.why（那里没有这个值，我踩过一次），也不能用 peak
             // （region 模式下 peak 常被 toFixed(1) 抹成 0）。
             if (change?.floor) continue
-            eventQueue.add('motion', toMotion(change, sheetId))
+            const motionEvent = toMotion(change, sheetId)
+            try {
+              onEvent?.('motion', motionEvent) // motion 不走 emit()，这里必须单独通知观察者
+            } catch {
+              /* 观察者出错不能影响事件入队 */
+            }
+            eventQueue.add('motion', motionEvent)
           }
         },
       })
@@ -214,6 +225,11 @@ export function createWatchService({
     startedAt = now()
     state = 'running'
     reason = null
+    try {
+      onWatchStart?.() // 新一轮陪看：主动唤醒的计数与缓冲要重置（票 11）
+    } catch {
+      /* 观察者出错不能影响开始采集 */
+    }
     speech?.start?.()
     return status()
   }
@@ -283,6 +299,11 @@ export function createWatchService({
 
   /** 给外部通道（字幕/声音）往同一条队列里投事件。 */
   function emit(kind, payload) {
+    try {
+      onEvent?.(kind, payload)
+    } catch {
+      /* 观察者出错不能影响事件入队 */
+    }
     return eventQueue.add(kind, payload)
   }
 
