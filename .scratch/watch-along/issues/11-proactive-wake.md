@@ -91,14 +91,45 @@
 **所以这条功能的正确形态是：让模型挂着 `watch_events({waitMs})` 阻塞，事件一到工具自然返回，
 模型就开口。** 完全在"注册工具"这个契约之内，不需要宿主给任何新能力。
 
-### 重设计（下一轮做，本轮不动）
+### 作者真正的做法（2026-11-22 读代码核实，`vendor/dsh-see-now-main/src/timer.js`）
 
-1. 工具描述里写清"陪看时应当循环调用 `watch_events({waitMs: 60})`，不要在两次调用之间空转"——
-   这是让模型主动说话的前提，现在没有这条引导，所以它只在你问的时候才看；
-2. `src/wake.mjs` 的判定层不用扔，**改用途**：从"要不要塞消息"变成"这个事件值不值得让长轮询
-   提前返回"（`high`/`cut` 才提前返回，其余攒着下次一起给）；节流与次数上限同样适用；
-3. 票面「连续 5 次没回应就停」这一条要重新定义：长轮询形态下没有"回应"可数，得改成
-   "用户连续 N 轮没接话就降低提前返回的频率"或直接删掉。
+**不是注入消息，是拿 agent 句柄直接「塞」给它：**
+
+```js
+// timer.js:69
+export function deliverToAgent(agent, text, { mode = 'steer' } = {}) {
+  const message = userMessage(text)          // {id, role:'user', content:[{type:'text'}], source:{kind}}
+  if (mode === 'steer' && typeof agent.steer === 'function') {
+    agent.steer(message)                     // 下一个 step 就交给模型，正在跑的轮次也立刻看得见
+    return { ok: true, via: 'steer' }
+  }
+  agent.followup(message)                    // 否则排到下一轮
+}
+```
+
+**agent 句柄从哪来——从工具调用的 run context 里拿，不需要任何服务：**
+
+```js
+// index.js:710
+function callerSessionOf(run) {
+  const session = run?.agent?.session               // ← run.agent 就是宿主给的 Agent
+  const id = session?.header?.id ?? session?.id ?? null
+  ...
+}
+```
+
+`sessionController` 只用在**命令路径**里"按会话 id 反查 agent"（`controllerOf(ctx)`），
+而且作者自己对它也做了防御（`serviceOf` 里把 Proxy 抛的错收住）—— 和我们探到的一样。
+
+**所以票 11 完全可做，且不需要 `sessionController`：**
+
+1. `watch_start` 的 `execute(args, run)` 第二个参数就是 run context，`run.agent` 拿到句柄；
+2. 存下这个句柄 = **天然满足「目标会话 = 最后一次 watch_start 的那个会话」**（不用猜、不用 list）；
+3. 唤醒时 `agent.steer(userMessage(text))`，失败退 `agent.followup`；
+4. 消息形状照抄：`{id: randomUUID(), role:'user', content:[{type:'text',text}], source:{kind:'watch-along'}}`。
+
+**我上一版写的「改用长轮询」是错的方向**（长轮询确实有，但不是作者的做法，也不需要为此重设计）。
+判定层 `src/wake.mjs` 原样保留：它产出的就是一串 prompt 文本，`send` 换成 steer 即可。
 
 **因此票 11 不从"受阻"结案，改成"机制要换"** —— 判定层 12 条测试仍有效，接法换一条。
 
