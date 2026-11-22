@@ -326,7 +326,6 @@ export function apply(ctx, opts = {}) {
       log: both,
       // 节奏交给下面的 watchLoop 管（tick 每 2 秒一次），waker 只负责"说什么"。
       // 两边都设间隔会互相打架：0 表示不在这里节流。
-      minGapMs: 0,
       promptTemplate: cur.commentPrompt,
       sheetId: () => lastComposite ?? lastSheet,
       composeSec: 3,

@@ -81,7 +81,7 @@ export function formatEvent(e) {
 export function createWaker({
   send, // async (text: string) => void —— 真正往会话塞消息的那一步
   now = Date.now,
-  minGapMs = 120_000,
+  minGapMs = null, // 不传就按 gapSec 算：说话间隔本身就是闸门
   promptTemplate = DEFAULT_COMMENT_PROMPT, // 设置里的「陪聊提示词」
   gapSec = 30, // 用于把模板里的 {n} 换成实际秒数
   sheetId = () => null, // 最近一张拼图的编号（可能没有）
@@ -95,6 +95,7 @@ export function createWaker({
   format = formatEvent,
 } = {}) {
   let events = []
+  const speakGapMs = minGapMs == null ? gapSec * 1000 : minGapMs
   let introSent = false
   let lastObserveAt = 0
   let lastWakeAt = 0
@@ -129,11 +130,19 @@ export function createWaker({
     return item
   }
 
+  // **限流放在这里，而不是调用方**。
+  // 2026-11-23 的教训：index.js 里有两处会发消息（循环 + 事件旁路），
+  // 限流写在调用方时，只要漏掉一处就全废。放在唯一发送点才是真的闸。
+  const MIN_OBSERVE_MS = 5000
+
   async function observe() {
+    if (lastObserveAt && now() - lastObserveAt < MIN_OBSERVE_MS) {
+      return { ok: false, reason: 'observe-too-soon' }
+    }
     // 只发**上次观察之后新来的**事件：秒级调用发整段摘要等于每秒重复一遍。
     const floor = lastObserveAt || now() - 5000
     const fresh = events.filter((e) => e.at > floor)
-    lastObserveAt = now()
+    lastObserveAt = now() // 闸门与增量游标同一个值：这次发出去之后，下一拍才允许再发
     const sid = (() => {
       try {
         return sheetId?.() ?? null
@@ -154,7 +163,7 @@ export function createWaker({
       image: sid ?? null,
       ...(fresh.length > MAX_EVENTS ? { omitted: fresh.length - MAX_EVENTS } : {}),
       events: shown.map(packEvent),
-      prompt: '用简短的一句话总结有用信息，不要整段，一行即可，直接输出到一个代码块里。',
+      prompt: '用简短的一句话总结有用信息，一行即可。**只输出这一个代码块，块外不要写任何文字。**',
     }
     // **紧凑序列化**（不缩进）：缩进约占 25%，而模型不在乎好看。
     const prompt = JSON.stringify(payload)
@@ -179,7 +188,7 @@ export function createWaker({
     if (!enabled) return { woke: false, reason: 'disabled' }
     if (exhausted) return { woke: false, reason: 'exhausted' }
     if (!isTrigger(event)) return { woke: false, reason: 'not-worth-it' }
-    if (lastWakeAt && now() - lastWakeAt < minGapMs) return { woke: false, reason: 'too-soon' }
+    if (lastWakeAt && now() - lastWakeAt < speakGapMs) return { woke: false, reason: 'too-soon' }
 
     // 上一次唤醒之后用户有没有说话 —— 只在要开口前查一次，不做实时订阅。
     if (lastWakeAt && hasUserMessageSince) {

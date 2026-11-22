@@ -53,8 +53,8 @@ test('触发条件：strength=high 或 cut=true，mid/low 不叫', async () => {
   assert.equal((await h2.waker.maybeWake({ kind: 'motion', cut: true })).woke, true)
 })
 
-test('最小间隔 120 秒：120 秒内不重复开口', async () => {
-  const h = harness()
+test('最小间隔：默认由 gapSec 决定（这里设成 120 秒）', async () => {
+  const h = harness({ gapSec: 120 })
   h.waker.feed({ kind: 'motion', strength: 'high', at: h.t })
   assert.equal((await h.waker.maybeWake({ kind: 'motion', strength: 'high' })).woke, true)
 
@@ -295,13 +295,21 @@ test('introText 仍是那段规则原文（保留给"想单独发一次"的用�
 })
 
 test('observe() 只发增量，不重复整段摘要', async () => {
+  let t = 1_000_000
   const sent = []
-  const w = createWaker({ enabled: true, gapSec: 30, promptTemplate: '规则', send: async (t) => sent.push(t), format: (e) => `- ${e.text}` })
-  w.feed({ kind: 'ocr', text: '旧事件', at: Date.now() })
+  const w = createWaker({
+    enabled: true,
+    gapSec: 30,
+    promptTemplate: '规则',
+    now: () => t,
+    send: async (x) => sent.push(x),
+    format: (e) => `- ${e.text}`,
+  })
+  w.feed({ kind: 'ocr', text: '旧事件', at: t })
   await w.observe()
-  await new Promise((r) => setTimeout(r, 30))
+  t += 6000 // 跨过 5 秒闸门
   sent.length = 0
-  w.feed({ kind: 'ocr', text: '新台词', at: Date.now() })
+  w.feed({ kind: 'ocr', text: '新台词', at: t })
   await w.observe()
   assert.match(sent[0], /新台词/)
   assert.doesNotMatch(sent[0], /旧事件/, '把上一轮已经发过的事件又发了一遍')
@@ -346,4 +354,28 @@ test('事件键名是英文三选一：say / sub / motion（没有 cut）', () =
     assert.deepEqual(keys, ['say', 'sub', 'motion'])
     assert.equal(keys.includes('切'), false, 'cut 是死字段，不该出现')
   })()
+})
+
+// ── 限流在唯一发送点：调用方怎么叫都绕不过 ─────────────
+test('observe 5 秒内第二次调用被挡（不用调用方自觉）', async () => {
+  const sent = []
+  const w = createWaker({ enabled: true, gapSec: 30, promptTemplate: 'r', send: async (t) => sent.push(t) })
+  const a = await w.observe()
+  const b = await w.observe()
+  assert.equal(a.ok, true)
+  assert.equal(b.ok, false)
+  assert.equal(b.reason, 'observe-too-soon')
+  assert.equal(sent.length, 1, '还是发出去了两条')
+})
+
+test('说话那条的闸门默认跟随 gapSec，不传 minGapMs 也不会放行', async () => {
+  const sent = []
+  const w = createWaker({ enabled: true, gapSec: 30, promptTemplate: 'r', send: async (t) => sent.push(t) })
+  w.feed({ kind: 'motion', text: '切镜', at: Date.now() })
+  const a = await w.maybeWake({ kind: 'motion', strength: 'high' })
+  const b = await w.maybeWake({ kind: 'motion', strength: 'high' })
+  assert.equal(a.woke, true)
+  assert.equal(b.woke, false)
+  assert.equal(b.reason, 'too-soon')
+  assert.equal(sent.length, 1)
 })
