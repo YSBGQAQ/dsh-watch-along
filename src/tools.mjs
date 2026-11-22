@@ -5,10 +5,34 @@ import path from 'node:path'
 
 const RUN_DIR = path.resolve('.scratch', 'run', 'frames')
 
+// 帧图只留最近这么多张。强制看图之后是 5 秒一张，一张 400–550KB：
+// 90 分钟不设上限就是 450MB。120 张≈10 分钟，够"回看刚才那个画面"。
+const KEEP_FRAMES = 120
+let sincePrune = 0
+
+function pruneFrames(dir) {
+  sincePrune += 1
+  if (sincePrune % 10 !== 0) return // 每写 10 张才扫一次目录
+  try {
+    const names = fs.readdirSync(dir).filter((n) => /^frame_\d+\.png$/.test(n)).sort()
+    const drop = names.length - KEEP_FRAMES
+    for (const n of names.slice(0, Math.max(0, drop))) {
+      try {
+        fs.unlinkSync(path.join(dir, n))
+      } catch {
+        /* 正被读就走，下次再删 */
+      }
+    }
+  } catch {
+    /* 目录读不到不影响取帧 */
+  }
+}
+
 function savePng(shot, seq, dir) {
   fs.mkdirSync(dir, { recursive: true })
   const file = path.join(dir, `frame_${String(seq).padStart(4, '0')}.png`)
   fs.writeFileSync(file, shot.png)
+  pruneFrames(dir)
   return file
 }
 
@@ -22,8 +46,8 @@ export function createTools({ service, listWindows, attachments = null, outDir =
    * 只给文字看不到画面，两边都残。
    */
   let latestSheetId = null
-  async function recentSnapshot(lastSec = 30) {
-    const sec = Number.isFinite(lastSec) && lastSec > 0 ? lastSec : 30
+  async function recentSnapshot(lastSec = 10) {
+    const sec = Number.isFinite(lastSec) && lastSec > 0 ? lastSec : 10
     try {
       const got = await service.events({ lastSec: sec, limit: 200 })
       const list = got?.events ?? []
@@ -111,7 +135,7 @@ export function createTools({ service, listWindows, attachments = null, outDir =
       parameters: {
         live: { type: 'boolean', description: 'true = 现在就抓一张（默认 true）' },
         sheetId: { type: 'string', description: '取事件里带的那张拼图；给了就不重新抓屏' },
-        lastSec: { type: 'number', description: '附带最近 N 秒的字幕/听写，默认 30' },
+        lastSec: { type: 'number', description: '附带最近 N 秒的字幕/听写，默认 10（每次多带 1 秒就多几十个 token，按需调大）' },
       },
       async execute(args = {}) {
         const shot = await service.frame({ live: args.live !== false, sheetId: args.sheetId ?? null })

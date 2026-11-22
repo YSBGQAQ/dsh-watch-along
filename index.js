@@ -261,6 +261,20 @@ export function apply(ctx, opts = {}) {
     /* 清理失败不该阻止插件启动 */
   }
 
+  // 调试产物不会自己过期：整段 PCM（raw-*.s16le）和测试录音（*.wav）都很大
+  // （2026-11-23 台账：283MB 里 166MB 是它们）。超过 48 小时就删，留两天够复盘。
+  try {
+    const runDir = path.join(HERE, '.scratch', 'run')
+    const cutoff = Date.now() - 48 * 3600_000
+    for (const name of fs.readdirSync(runDir)) {
+      if (!/^(raw-.+\.s16le|.+\.wav)$/i.test(name)) continue
+      const f = path.join(runDir, name)
+      if (fs.statSync(f).mtimeMs < cutoff) fs.unlinkSync(f)
+    }
+  } catch {
+    /* 同上：清理失败不影响启动 */
+  }
+
   // ── 票 11：主动唤醒（默认关）──────────────────────────────────────────
   // 判定层在 src/wake.mjs（可全量单测），这里只负责"接到宿主的会话"。
   // 宿主能力拿不到就整条降级：只打一行日志，工具与三条通道照常。

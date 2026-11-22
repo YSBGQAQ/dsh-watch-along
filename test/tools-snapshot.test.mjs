@@ -62,7 +62,7 @@ test('watch_frame 一次返回图 + 最近的字幕与听写', async () => {
   const frameTool = tools.find((t) => t.name === 'watch_frame')
   const out = await frameTool.execute({})
   assert.ok(out.file, '没有落盘路径')
-  assert.equal(out.recent.seconds, 30)
+  assert.equal(out.recent.seconds, 10, '默认跟手带 10 秒字幕就够了（30 秒是纯重复，每次多几百 token）')
   assert.equal(out.recent.ocr[0].text, '别开窗')
   assert.equal(out.recent.ocr[0].t, 12.3, '字幕没带相对秒数')
   assert.ok(out.recent.ocr[0].clock, '字幕没带绝对时刻')
