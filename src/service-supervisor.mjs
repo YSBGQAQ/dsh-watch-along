@@ -12,6 +12,7 @@ import http from 'node:http'
 import fs from 'node:fs'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
+import { DEFAULTS, PRESETS, loadSettings, saveSettings } from './settings.mjs'
 
 export const DEFAULT_PORTS = { ocr: 8765, asr: 8766, panel: 8790 }
 
@@ -47,6 +48,18 @@ export function resolveConfig(env = process.env, { rootDir = process.cwd() } = {
   return { python, whisperDir, ports, rootDir, missing, ready: missing.length === 0 }
 }
 
+function readBody(req) {
+  return new Promise((resolve) => {
+    let buf = ''
+    req.on('data', (c) => {
+      buf += c
+      if (buf.length > 64 * 1024) req.destroy() // 设置体不该这么大
+    })
+    req.on('end', () => resolve(buf))
+    req.on('error', () => resolve(''))
+  })
+}
+
 function safeExists(p) {
   try {
     return fs.existsSync(p)
@@ -71,9 +84,49 @@ async function probe(port, { fetchImpl = globalThis.fetch, timeoutMs = 1500 } = 
   }
 }
 
+/**
+ * 设置接口的纯函数部分（可单测）：GET 返回当前值 + 默认值 + 预设；POST 校验后落盘。
+ * 非法值一律 200 + rejected —— 界面要能指出"哪一项、为什么"（票 07 的刻意设计）。
+ */
+export function handleSettings({ file, method = 'GET', body = null } = {}) {
+  if (!file) return { status: 500, body: { ok: false, error: '没有 settings 文件路径' } }
+  if (method === 'GET') {
+    const loaded = loadSettings(file)
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        value: loaded.value,
+        source: loaded.source,
+        error: loaded.error ?? null,
+        rejected: loaded.rejected,
+        defaults: DEFAULTS,
+        presets: PRESETS,
+      },
+    }
+  }
+  if (method === 'POST') {
+    let patch = body
+    if (typeof patch === 'string') {
+      try {
+        patch = JSON.parse(patch)
+      } catch {
+        return { status: 200, body: { ok: false, rejected: [{ field: '(整体)', reason: '不是合法 JSON' }] } }
+      }
+    }
+    if (!patch || typeof patch !== 'object') {
+      return { status: 200, body: { ok: false, rejected: [{ field: '(整体)', reason: '需要对象' }] } }
+    }
+    const r = saveSettings(file, patch)
+    return { status: 200, body: { ok: r.ok, rejected: r.rejected, value: r.value } }
+  }
+  return { status: 405, body: { ok: false, error: 'method not allowed' } }
+}
+
 export function createSupervisor({
   config,
   rootDir,
+  settingsFile = null,
   fetchImpl = globalThis.fetch,
   spawnImpl = spawn,
   log = () => {},
@@ -138,6 +191,12 @@ export function createSupervisor({
       try {
         if (req.url?.startsWith('/status')) return res.end(JSON.stringify(await status()))
         if (req.url?.startsWith('/start')) return res.end(JSON.stringify(await start()))
+        if (req.url?.startsWith('/settings')) {
+          const body = req.method === 'POST' ? await readBody(req) : null
+          const r = handleSettings({ file: settingsFile, method: req.method, body })
+          res.statusCode = r.status
+          return res.end(JSON.stringify(r.body))
+        }
         res.statusCode = 404
         res.end(JSON.stringify({ ok: false, error: 'not found' }))
       } catch (e) {

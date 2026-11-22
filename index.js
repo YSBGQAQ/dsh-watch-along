@@ -15,6 +15,7 @@ import { createWaker } from './src/wake.mjs'
 import { deliverToAgent } from './src/agent-delivery.mjs'
 import { createWatchLoop } from './src/watch-loop.mjs'
 import { createSupervisor } from './src/service-supervisor.mjs'
+import { loadSettings } from './src/settings.mjs'
 import crypto from 'node:crypto'
 import { defineToolCompat } from './vendor/dsh-see-now-main/src/define-tool.js'
 import http from 'node:http'
@@ -132,9 +133,14 @@ export function apply(ctx, opts = {}) {
     }
   }
 
+  // 设置（票 07）：启动时读一次，改完要重启才生效 —— 这是票面承认的约定。
+  const settingsFile = path.join(HERE, '.scratch', 'run', 'settings.json')
+  const cur = loadSettings(settingsFile).value
+
   // 字幕通道：两次一致才收录。onEvent 走 service.emit，和画面共用一条队列。
   let svcRef = null
-  const subtitle = createSubtitleReader({
+  // 设置里关掉就不建这条通道（省 CPU，也免得用户以为关了还在跑）
+  const subtitle = cur.subtitle === false ? null : createSubtitleReader({
     encode,
     recognize,
     // 2026-11-22：时间节流已移除。它原本给已废弃的「两次一致」判定留时间间隔，
@@ -166,7 +172,7 @@ export function apply(ctx, opts = {}) {
     },
   })
 
-  const speech = createSpeechReader({
+  const speech = cur.speech === false ? null : createSpeechReader({
     listen,
     windowSec: 3,
     onEvent: (e) => {
@@ -319,7 +325,7 @@ export function apply(ctx, opts = {}) {
     speech,
     // 判据、档位、拼图全部来自参考库；打开 changeLog 才有"每张图一条变化摘要"可读。
     createPipeline: () =>
-      createPipeline({ width: 798, height: 450, fps: 8, changeLog: true, changeLogMax: 500 }),
+      createPipeline({ width: 798, height: 450, fps: cur.fps ?? 8, changeLog: true, changeLogMax: 500 }),
     onCaptureStderr: (s) => log(`ffmpeg: ${String(s).trim().slice(0, 300)}`),
     onEvent: (kind, payload) => {
       if (!waker) return
@@ -349,7 +355,7 @@ export function apply(ctx, opts = {}) {
   // "循环等 watch_start 再起"就断了）。
   const disposers = []
 
-  const supervisor = createSupervisor({ log: both, rootDir: HERE })
+  const supervisor = createSupervisor({ log: both, rootDir: HERE, settingsFile })
   // 测试/预检模式不占端口（监听中的 server 会让进程不退出，把测试挂死）
   const skipPanel = opts.panel === false || process.env.WATCH_ALONG_NO_PANEL === '1'
   const panelServer = skipPanel ? null : supervisor.serve()
@@ -378,6 +384,7 @@ export function apply(ctx, opts = {}) {
     service,
     listWindows,
     serviceStatus: () => supervisor.status(),
+    defaultWindow: cur.window || '',
     // 票 11：记住"谁开的陪看"。agent 句柄来自 watch_start 的 run context，
     // 不是靠 sessionController 反查 —— 宿主没把那个服务给插件（实测取不到）。
     onAgent: (agent) => {

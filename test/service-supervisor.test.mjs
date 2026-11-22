@@ -76,3 +76,57 @@ test('只启动没起来的那个（已经在跑的不重复拉）', async () =>
   assert.equal(r.started.length, 1, `启动了 ${r.started.length} 个`)
   assert.match(launched[0], /asr_service\.py/)
 })
+
+// ── 设置接口（票 07）：非法值 200 + rejected，合法值落盘 ───────────────────
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { handleSettings } from '../src/service-supervisor.mjs'
+
+function tmpFile() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-settings-'))
+  return path.join(dir, 'settings.json')
+}
+
+test('GET /settings 没文件时回默认值，不报错', () => {
+  const r = handleSettings({ file: tmpFile(), method: 'GET' })
+  assert.equal(r.status, 200)
+  assert.equal(r.body.value.preset, 'cinema')
+  assert.equal(r.body.source, 'default')
+  assert.ok(r.body.presets.cinema)
+})
+
+test('POST /settings 合法值落盘并回读一致', () => {
+  const file = tmpFile()
+  const w = handleSettings({ file, method: 'POST', body: { quality: 'low', speechPerMin: 3 } })
+  assert.equal(w.body.ok, true)
+  const g = handleSettings({ file, method: 'GET' })
+  assert.equal(g.body.value.quality, 'low')
+  assert.equal(g.body.value.speechPerMin, 3)
+  assert.equal(g.body.source, 'file')
+})
+
+test('POST 非法值是 200 + rejected，且**不落盘**', () => {
+  const file = tmpFile()
+  const w = handleSettings({ file, method: 'POST', body: { quality: 'ultra' } })
+  assert.equal(w.status, 200)
+  assert.equal(w.body.ok, false)
+  assert.equal(w.body.rejected[0].field, 'quality')
+  assert.match(w.body.rejected[0].reason, /low/)
+  const g = handleSettings({ file, method: 'GET' })
+  assert.equal(g.body.value.quality, 'high', '非法值把文件写坏了')
+})
+
+test('选预设会一次写入配套参数', () => {
+  const file = tmpFile()
+  handleSettings({ file, method: 'POST', body: { preset: 'game' } })
+  const g = handleSettings({ file, method: 'GET' })
+  assert.equal(g.body.value.preset, 'game')
+  assert.equal(g.body.value.quality, g.body.presets.game.quality)
+})
+
+test('POST 体不是 JSON 也要给得出人话', () => {
+  const r = handleSettings({ file: tmpFile(), method: 'POST', body: '{坏' })
+  assert.equal(r.body.ok, false)
+  assert.match(r.body.rejected[0].reason, /JSON/)
+})

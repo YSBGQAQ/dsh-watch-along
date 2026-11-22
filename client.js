@@ -50,6 +50,103 @@ window.__ModuleLoader__.load({
         props.children)
     }
 
+    // 常用设置（票 07）：六个可改项 + 场景预设。
+    // 后端只有 /settings 两个动作，校验全在 src/settings.mjs 的 validate 里 ——
+    // 非法值是 200 + rejected，界面负责把原因显示到对应输入框下面（票面明确要求）。
+    const QUALITY_OPTS = ['low', 'medium', 'high']
+    const PRESET_NAMES = { game: '游戏', lecture: '讲课', cinema: '影视' }
+
+    const fieldStyle = { padding: '4px 6px', fontSize: 13, border: '1px solid rgba(127,127,127,.35)', borderRadius: 5, background: 'transparent', color: 'inherit', width: 200 }
+    const errStyle = { color: '#c0392b', fontSize: 11.5, marginTop: 2 }
+
+    function Settings() {
+      const [val, setVal] = React.useState(null)
+      const [rejected, setRejected] = React.useState({})
+      const [dirty, setDirty] = React.useState({})
+      const [msg, setMsg] = React.useState('')
+      const [busy, setBusy] = React.useState(false)
+
+      const load = () => {
+        fetch(PANEL_API + '/settings')
+          .then((r) => r.json())
+          .then((d) => { if (d && d.ok) setVal(d.value) })
+          .catch(() => setMsg('读设置失败：连不上面板接口'))
+      }
+      React.useEffect(() => { load() }, [])
+
+      const edit = (k, v) => {
+        setVal(Object.assign({}, val, { [k]: v }))
+        setDirty(Object.assign({}, dirty, { [k]: v }))
+        setMsg('')
+      }
+
+      const save = () => {
+        const patch = Object.assign({}, dirty)
+        if (!Object.keys(patch).length) { setMsg('没有改动'); return }
+        setBusy(true)
+        fetch(PANEL_API + '/settings', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(patch),
+        })
+          .then((r) => r.json())
+          .then((d) => {
+            if (d.ok) {
+              setRejected({})
+              setDirty({})
+              setVal(d.value)
+              setMsg('已保存。画质档 / 帧率这类采集参数要重启 DSH 才生效。')
+            } else {
+              const m = {}
+              ;(d.rejected || []).forEach((x) => { m[x.field] = x.reason })
+              setRejected(m)
+              setMsg('有 ' + (d.rejected || []).length + ' 项没通过校验，已逐条标在下面。')
+            }
+          })
+          .catch((e) => setMsg('保存失败：' + String(e && e.message ? e.message : e)))
+          .finally(() => setBusy(false))
+      }
+
+      if (!val) return h('div', { style: styles.card }, '读取设置…')
+
+      const row = (k, label, node, hint) =>
+        h('div', { key: k, style: { display: 'flex', gap: 10, padding: '5px 0', alignItems: 'flex-start' } },
+          h('div', { style: { width: 140, flex: '0 0 auto', opacity: 0.6, fontSize: 13 } }, label),
+          h('div', { style: { flex: 1 } },
+            node,
+            hint ? h('div', { style: { fontSize: 11.5, opacity: 0.5, marginTop: 2 } }, hint) : null,
+            rejected[k] ? h('div', { style: errStyle }, rejected[k]) : null))
+
+      return h('div', { style: styles.card },
+        row('window', '窗口标题片段',
+          h('input', { style: fieldStyle, value: val.window || '', placeholder: '留空 = 还没选窗口', onChange: (e) => edit('window', e.target.value) })),
+        row('preset', '场景预设',
+          h('select', { style: fieldStyle, value: val.preset, onChange: (e) => edit('preset', e.target.value) },
+            Object.keys(PRESET_NAMES).map((k) => h('option', { key: k, value: k }, PRESET_NAMES[k]))),
+          '选预设会一并写入帧率与画质'),
+        row('quality', '画质档',
+          h('select', { style: fieldStyle, value: val.quality, onChange: (e) => edit('quality', e.target.value) },
+            QUALITY_OPTS.map((q) => h('option', { key: q, value: q }, q))),
+          '会存下来；目前还没接到采集尺寸上'),
+        row('subtitle', '画面字幕（OCR）',
+          h('input', { type: 'checkbox', checked: !!val.subtitle, onChange: (e) => edit('subtitle', e.target.checked) }),
+          '关掉就不读屏幕上的字'),
+        row('speech', '声音转写（Whisper）',
+          h('input', { type: 'checkbox', checked: !!val.speech, onChange: (e) => edit('speech', e.target.checked) }),
+          '关掉就不听人说话'),
+        row('speechPerMin', '说话频率上限',
+          h('input', { type: 'number', min: 1, max: 30, style: Object.assign({}, fieldStyle, { width: 90 }), value: val.speechPerMin, onChange: (e) => edit('speechPerMin', Number(e.target.value)) }),
+          '会存下来；目前还没接到转写节流上'),
+        h('div', { style: { marginTop: 10 } },
+          h('button', {
+            type: 'button',
+            onClick: save,
+            disabled: busy,
+            style: { padding: '5px 12px', borderRadius: 6, cursor: busy ? 'default' : 'pointer', fontSize: 13, border: '1px solid rgba(127,127,127,.35)', background: 'transparent', color: 'inherit', opacity: busy ? 0.5 : 1 },
+          }, busy ? '保存中…' : '保存')),
+        msg ? h('div', { style: { marginTop: 6, fontSize: 12, opacity: 0.75 } }, msg) : null)
+    }
+
     // 两个 python 服务的状态与启动。
     //
     // 为什么走本机回环而不是宿主 RPC：这个面板跑在渲染进程里，拿不到主进程模块；
@@ -128,9 +225,7 @@ window.__ModuleLoader__.load({
             PRESETS.map((p) => h('div', { key: p.id, style: { padding: '2px 0' } },
               h('strong', null, p.name), ' — ', h('span', { style: { opacity: 0.65 } }, p.detail))))),
         h(Section, { title: '常用设置' },
-          h('div', { style: styles.card },
-            FIELDS.map((f) => h(Row, { key: f.k, label: f.label },
-              h('span', null, f.hint))))),
+          h(Settings, null)),
         h(Section, { title: '服务' },
           h(Services, null)),
         h(Section, { title: '现在能做什么' },

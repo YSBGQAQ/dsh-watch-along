@@ -12,7 +12,7 @@ function savePng(shot, seq, dir) {
   return file
 }
 
-export function createTools({ service, listWindows, attachments = null, outDir = RUN_DIR, onAgent = null, serviceStatus = null }) {
+export function createTools({ service, listWindows, attachments = null, outDir = RUN_DIR, onAgent = null, serviceStatus = null, defaultWindow = '' }) {
   let seq = 0
 
   /** 服务没起来时必须**说出来**：否则用户看到的是"AI 不听声音"，查半天才知道服务没开。 */
@@ -67,7 +67,8 @@ export function createTools({ service, listWindows, attachments = null, outDir =
       // 不是靠猜出来的，就是这里抓到的那一个**。
       async execute(args = {}, run) {
         onAgent?.(run?.agent ?? null)
-        const started = await service.start({ window: args.window })
+        // 设置里的「窗口标题片段」当默认值：模型没给窗口时不用再问一句
+        const started = await service.start({ window: args.window || defaultWindow || '' })
         const warnings = await serviceWarnings()
         return warnings.length ? { ...started, warnings } : started
       },
