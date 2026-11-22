@@ -69,12 +69,17 @@ export function defaultProbes({ venvPython, modelDir, whisperDir, ffmpegPath = '
       detail: modelDir ?? '未配置 OCR 模型目录',
     }),
     whisper: () => {
-      const want = ['config.json', 'model.bin', 'tokenizer.json', 'vocabulary.json', 'preprocessor_config.json']
+      // 必需三项；词表允许 .json 或 .txt（小模型 faster-whisper-small 就是 .txt，
+      // 且没有 preprocessor_config.json —— 2026-11-23 实测：按大模型的五件套判，
+      // 会把一个正在正常转写的环境判成红的）。
+      const must = ['config.json', 'model.bin', 'tokenizer.json']
       if (!whisperDir) return { ok: false, detail: '未配置 Whisper 目录' }
-      const missing = want.filter((f) => !exists(`${whisperDir}/${f}`))
+      const missing = must.filter((f) => !exists(`${whisperDir}/${f}`))
+      const hasVocab = exists(`${whisperDir}/vocabulary.json`) || exists(`${whisperDir}/vocabulary.txt`)
+      if (!hasVocab) missing.push('vocabulary.json/.txt')
       return {
         ok: missing.length === 0,
-        detail: missing.length ? `缺 ${missing.join(' / ')}` : `${want.length} 个文件齐全`,
+        detail: missing.length ? `缺 ${missing.join(' / ')}` : `${whisperDir}（必备文件齐全）`,
       }
     },
     audioOut: () => ({ ok: true, warn: true, detail: '未探测（需要列出环回设备，稍后补）' }),

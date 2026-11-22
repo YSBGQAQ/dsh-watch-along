@@ -11,9 +11,10 @@
 import http from 'node:http'
 import fs from 'node:fs'
 import path from 'node:path'
-import { spawn, execFileSync } from 'node:child_process'
+import { spawn, execFile, execFileSync } from 'node:child_process'
 import { DEFAULTS, loadSettings, saveSettings } from './settings.mjs'
 import { defaultStartupLogFile } from './startup-log.mjs'
+import { runChecks, defaultProbes } from './doctor.mjs'
 
 export const DEFAULT_PORTS = { ocr: 8765, asr: 8766, panel: 8790 }
 
@@ -274,6 +275,63 @@ export function createSupervisor({
     return { ...started, killed }
   }
 
+  /**
+   * 环境检查（spec：设置页首项）。
+   * 八项里能真查的就真查；探不到的标"黄 + 未探测"，不许假装绿。
+   * 服务相关的两项直接问服务本身 —— 比查文件准（跑起来的才算数）。
+   */
+  async function doctor() {
+    const [ocr, asr] = await Promise.all([
+      probe(cfg.ports.ocr, { fetchImpl }),
+      probe(cfg.ports.asr, { fetchImpl }),
+    ])
+    const sitePackages = path.resolve(path.dirname(cfg.python), '..', 'Lib', 'site-packages')
+    const probes = defaultProbes({
+      venvPython: cfg.python,
+      whisperDir: cfg.whisperDir,
+      modelDir: path.join(sitePackages, 'rapidocr', 'models'),
+    })
+    probes.python = () => ({ ok: fs.existsSync(cfg.python), detail: cfg.python })
+    // 三个包**真导入**才算过：venv 存在不等于装对了（差一个 rapidocr 就白搭）。
+    // 用异步 execFile，别把面板接口堵住。
+    probes.pkgs = () =>
+      new Promise((resolve) => {
+        execFile(
+          cfg.python,
+          ['-c', 'import rapidocr, faster_whisper, soundcard'],
+          { timeout: 20000, windowsHide: true },
+          (err, _out, stderr) => {
+            if (!err) return resolve({ ok: true, detail: 'rapidocr / faster-whisper / soundcard 都能导入' })
+            resolve({
+              ok: false,
+              detail: `导入失败：${String(stderr || err.message || err).trim().split('\n').pop().slice(0, 160)}`,
+            })
+          },
+        )
+      })
+    // 显卡：没有 NVIDIA 不是错（现在是 CPU 模式），只标黄
+    probes.driver = () =>
+      new Promise((resolve) => {
+        execFile('nvidia-smi', ['--query-gpu=name', '--format=csv,noheader'], { timeout: 4000, windowsHide: true }, (err, out) => {
+          if (err) return resolve({ ok: true, warn: true, detail: '没装 nvidia-smi（CPU 模式可跑，转写会慢些）' })
+          resolve({ ok: true, detail: String(out || '').trim().split('\n')[0] })
+        })
+      })
+    probes.ffmpeg = () => {
+      try {
+        execFileSync('ffmpeg', ['-version'], { stdio: 'ignore', timeout: 3000 })
+        return { ok: true, detail: 'ffmpeg 在 PATH 上' }
+      } catch {
+        return { ok: false, detail: 'ffmpeg 不在 PATH 上（只有合成素材/转码才用到）' }
+      }
+    }
+    probes.ocrModel = () =>
+      ocr.up ? { ok: true, detail: '服务在跑，模型已加载' } : { ok: false, detail: 'OCR 服务没起来，面板可一键启动' }
+    probes.audioOut = () =>
+      asr.up ? { ok: true, detail: asr.detail ?? '扬声器' } : { ok: false, detail: 'ASR 服务没起来，面板可一键启动' }
+    return runChecks(probes)
+  }
+
   /** 只绑 127.0.0.1 的面板接口：GET /status、POST /start、POST /restart。 */
   function serve(port = cfg.ports.panel) {
     const server = http.createServer(async (req, res) => {
@@ -291,6 +349,7 @@ export function createSupervisor({
       }
       try {
         if (req.url?.startsWith('/status')) return res.end(JSON.stringify(await status()))
+        if (req.url?.startsWith('/doctor')) return res.end(JSON.stringify(await doctor()))
         if (req.url?.startsWith('/start')) return res.end(JSON.stringify(await start()))
         if (req.url?.startsWith('/restart')) return res.end(JSON.stringify(await restart()))
         if (req.url?.startsWith('/settings')) {

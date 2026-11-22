@@ -10,6 +10,11 @@ import { DEFAULT_COMMENT_PROMPT } from './wake.mjs'
 export const DEFAULTS = Object.freeze({
   window: '', // 标题片段；空 = 还没选窗口
   quality: 'high', // low | medium | high
+  // 每轮唤醒给模型传什么图（2026-11-23 加）：
+  //   none  = 不传，纯文字（最便宜）
+  //   low   = 640 宽缩图（默认：模型看图时间约为原尺寸的 64%）
+  //   high  = 798 原尺寸（要读小字/表情时用）
+  imageQuality: 'low',
   fps: 8, // 采集帧率 0–30；**0 = 关闭画面通道**（只剩声音）
   subtitle: true,
   speech: true,
@@ -84,6 +89,10 @@ export function validate(patch, current = DEFAULTS) {
         if (!QUALITIES.includes(raw)) reject(key, `只能是 ${QUALITIES.join(' / ')}`)
         else value.quality = raw
         break
+      case 'imageQuality':
+        if (!['none', 'low', 'high'].includes(raw)) reject(key, '只能是 none / low / high')
+        else value.imageQuality = raw
+        break
       case 'subtitle':
       case 'speech':
         if (typeof raw !== 'boolean') reject(key, '必须是 true / false')
@@ -139,7 +148,7 @@ export const ENV_CHECKS = Object.freeze([
   { id: 'driver', label: '显卡驱动' },
   { id: 'cuda', label: 'CUDA 运行时' },
   { id: 'ocrModel', label: 'OCR 模型' },
-  { id: 'whisper', label: 'Whisper 五个文件' },
+  { id: 'whisper', label: 'Whisper 模型文件' },
   { id: 'audioOut', label: '输出设备' },
 ])
 

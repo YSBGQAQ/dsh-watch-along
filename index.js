@@ -391,7 +391,12 @@ export function apply(ctx, opts = {}) {
     // 07:15 找到根因：宿主自己的图块是六项描述符（mediaType/width/height/bytes/name 都要）。
     // 补齐后重开；一旦日志里再出现 `图被拒` 或 finish=error 连片，立刻关掉。
     const ATTACH_IMAGE_IN_MESSAGE = true
-    const canAttach = ATTACH_IMAGE_IN_MESSAGE && !!attachmentsOf()?.saveImage
+    // 传图三档（设置可调，默认低清）：none 不传 / low 640 宽 / high 798 原尺寸
+    const imgQ = cur.imageQuality ?? 'low'
+    const uploadW = imgQ === 'high' ? 0 : 640
+    const canAttach = ATTACH_IMAGE_IN_MESSAGE && imgQ !== 'none' && !!attachmentsOf()?.saveImage
+    // 不传图时也别再逼它调工具看图 —— 那条路最后还是要传图。
+    const forceLook = imgQ !== 'none'
     waker = createWaker({
       enabled: true,
       log: both,
@@ -403,6 +408,7 @@ export function apply(ctx, opts = {}) {
       // 强制看图：图能随消息附上时（正常情况）就不必再走工具，门闩直接放行；
       // 附件服务不可用才退回"上一轮有没有调 watch_frame"这套。
       frameGate: canAttach ? () => true : (sinceWakeAt) => lastFrameAt > (sinceWakeAt ?? 0),
+      forceLook,
       attachImages: canAttach,
       gapSec: cur.wakeGapSec ?? 30,
       // send 失败只是这一拍没叫，不能影响陪看；waker 内部会捕获并记日志。
@@ -422,7 +428,7 @@ export function apply(ctx, opts = {}) {
         let images = null
         try {
           if (!canAttach) throw new Error('宿主没有 attachments 服务')
-          const shot = await service.frame({ live: true, maxWidth: 640 })
+          const shot = await service.frame({ live: true, maxWidth: uploadW })
           const svc = attachmentsOf()
           if (svc?.saveImage) {
             const name = `wake-${Date.now()}.png`
@@ -680,6 +686,7 @@ export function apply(ctx, opts = {}) {
     listWindows,
     serviceStatus: () => supervisor.status(),
     defaultWindow: cur.window || '',
+    uploadWidth: cur.imageQuality === 'high' ? 0 : 640,
     // 帧图**必须落在插件目录下**。默认值用的是进程 cwd，而 DSH 启动插件时 cwd 不是仓库根，
     // 结果 2026-11-23 那轮 66 次取帧的 PNG 全写到了别处（日志有"取帧"、仓库里一张没有）。
     outDir: path.join(HERE, '.scratch', 'run', 'frames'),

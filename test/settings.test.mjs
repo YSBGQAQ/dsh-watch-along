@@ -85,3 +85,15 @@ test('陪聊提示词：默认带 {n}，空串与超长都拒', () => {
   assert.equal(validate({ commentPrompt: '   ' }).ok, false)
   assert.equal(validate({ commentPrompt: 'x'.repeat(601) }).ok, false)
 })
+
+test('传图档位：默认低清，三档之外的都拒', () => {
+  assert.equal(DEFAULTS.imageQuality, 'low', '默认必须是低清')
+  for (const v of ['none', 'low', 'high']) {
+    const r = validate({ imageQuality: v })
+    assert.equal(r.ok, true, `${v} 应该被接受`)
+    assert.equal(r.value.imageQuality, v)
+  }
+  const bad = validate({ imageQuality: 'medium' })
+  assert.equal(bad.ok, false)
+  assert.match(bad.rejected[0].reason, /none \/ low \/ high/)
+})

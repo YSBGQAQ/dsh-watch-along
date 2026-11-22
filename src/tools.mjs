@@ -40,7 +40,7 @@ function savePng(shot, seq, dir) {
   return file
 }
 
-export function createTools({ service, listWindows, attachments = null, outDir = RUN_DIR, onAgent = null, onFrame = null, serviceStatus = null, defaultWindow = '' }) {
+export function createTools({ service, listWindows, attachments = null, outDir = RUN_DIR, onAgent = null, onFrame = null, serviceStatus = null, defaultWindow = '', uploadWidth = UPLOAD_MAX_W }) {
   let seq = 0
 
   /**
@@ -148,7 +148,7 @@ export function createTools({ service, listWindows, attachments = null, outDir =
         const shot = await service.frame({
           live: args.live !== false,
           sheetId: args.sheetId ?? null,
-          maxWidth: args.hd ? 0 : UPLOAD_MAX_W,
+          maxWidth: args.hd ? 0 : uploadWidth,
         })
         // **一次调用给全**：图 + 最近 N 秒的字幕与听写。
         // 只给图的话，模型看得到画面、读不到台词；只给文字则相反，两边都残。

@@ -42,6 +42,12 @@ window.__ModuleLoader__.load({
     // 后端只有 /settings 两个动作，校验全在 src/settings.mjs 的 validate 里 ——
     // 非法值是 200 + rejected，界面负责把原因显示到对应输入框下面（票面明确要求）。
     const QUALITY_OPTS = ['low', 'medium', 'high']
+    // 传图三档：值 → 界面文案
+    const IMAGE_OPTS = [
+      ['none', '不传（纯文字）'],
+      ['low', '低清 640 宽（默认）'],
+      ['high', '高清 798 原尺寸'],
+    ]
 
     const fieldStyle = { padding: '4px 6px', fontSize: 13, border: '1px solid rgba(127,127,127,.35)', borderRadius: 5, background: 'transparent', color: 'inherit', width: 200 }
     const errStyle = { color: '#c0392b', fontSize: 11.5, marginTop: 2 }
@@ -114,6 +120,10 @@ window.__ModuleLoader__.load({
           h('select', { style: fieldStyle, value: val.quality, onChange: (e) => edit('quality', e.target.value) },
             QUALITY_OPTS.map((q) => h('option', { key: q, value: q }, q))),
           '改小更省 CPU，但字幕像素也变少、OCR 准头会降'),
+        row('imageQuality', '传图档位',
+          h('select', { style: fieldStyle, value: val.imageQuality || 'low', onChange: (e) => edit('imageQuality', e.target.value) },
+            IMAGE_OPTS.map((o) => h('option', { key: o[0], value: o[0] }, o[1]))),
+          '每一轮发给模型的画面：低清 640 宽最省时间（默认）；高清 798 能看清小字，每轮多花约 1 秒；不传则只读文字'),
         row('subtitle', '画面字幕（OCR）',
           h('input', { type: 'checkbox', checked: !!val.subtitle, onChange: (e) => edit('subtitle', e.target.checked) }),
           '关掉就不读屏幕上的字'),
@@ -265,10 +275,49 @@ window.__ModuleLoader__.load({
         msg ? h('div', { style: { marginTop: 6, fontSize: 12, opacity: 0.75 } }, msg) : null)
     }
 
+    /**
+     * 环境检查：八项只读，绿/黄/红。
+     * 为什么放最前：环境不对时，用户看到的第一个现象是"AI 不理我"，
+     * 而不是"缺 ffmpeg" —— 把它顶到第一屏，问题自己会说话。
+     */
+    function Doctor() {
+      const [d, setD] = React.useState(null)
+      const [busy, setBusy] = React.useState(false)
+      const load = () => {
+        setBusy(true)
+        fetch(PANEL_API + '/doctor')
+          .then((r) => r.json())
+          .then(setD)
+          .catch(() => setD({ ready: false, checks: [{ id: 'x', label: '面板接口', state: 'fail', reason: '连不上面板接口' }] }))
+          .finally(() => setBusy(false))
+      }
+      React.useEffect(() => { load() }, [])
+      if (!d) return h('div', { style: styles.card }, '正在检查环境…')
+      const color = (s) => (s === 'ok' ? '#1a7f37' : s === 'warn' ? '#b58105' : '#c0392b')
+      const mark = (s) => (s === 'ok' ? '●' : s === 'warn' ? '◐' : '✕')
+      return h('div', { style: styles.card },
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 } },
+          h('span', { style: { fontWeight: 600 } }, d.ready ? '环境齐全，可以开始' : '有项没过，先修再跑'),
+          h('button', {
+            style: { marginLeft: 'auto', fontSize: 12, padding: '2px 10px', cursor: 'pointer', borderRadius: 6,
+              border: '1px solid rgba(127,127,127,.35)', background: 'transparent', color: 'inherit' },
+            onClick: load,
+            disabled: busy,
+          }, busy ? '检查中…' : '重新检测')),
+        (d.checks || []).map((c) => h('div', { key: c.id, style: { display: 'flex', gap: 8, padding: '3px 0', fontSize: 13 } },
+          h('span', { style: { color: color(c.state), width: 14, flex: '0 0 auto' } }, mark(c.state)),
+          h('span', { style: { width: 128, flex: '0 0 auto' } }, c.label),
+          h('span', { style: { opacity: 0.7, flex: 1, wordBreak: 'break-all' } }, c.reason || ''))))
+    }
+
     function Panel() {
       return h('div', { style: styles.wrap },
         h('div', { style: styles.title }, '陪看'),
         h('div', { style: styles.intro }, '让 AI 看你的屏幕：画面变化、屏幕文字、系统声音，三条通道汇成一条事件流。'),
+        // spec：首项永远是「环境检查」。八项只读检查，绿黄红三态，
+        // 失败只给原因，**不提供任何一键下载**（环境须用户自备）。
+        h(Section, { title: '环境检查' },
+          h(Doctor, null)),
         h(Section, { title: '常用设置' },
           h(Settings, null)),
         h(Section, { title: '服务' },

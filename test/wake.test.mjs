@@ -461,3 +461,21 @@ test('图随消息附上时，不再要求调工具（省一次往返）', async
   assert.match(j.mustSee, /图已附/, '应该告诉它图就在消息里')
   assert.doesNotMatch(j.mustSee, /先调用 watch_frame/, '不该再逼它调工具')
 })
+
+test('不传图时连"强制看图"也关掉：不给 mustSee、不催看', async () => {
+  let gateCalls = 0
+  const sent = []
+  const w = createWaker({
+    enabled: true,
+    minGapMs: 0,
+    promptTemplate: '你是搭子',
+    sheetId: () => 'S1',
+    forceLook: false,
+    frameGate: () => { gateCalls += 1; return false },
+    send: async (t) => sent.push(t),
+  })
+  await w.maybeWake({ kind: 'motion', strength: 'high', text: '切镜' })
+  const j = JSON.parse(sent[0])
+  assert.equal(j.mustSee, undefined, '不传图就不该要求它看图')
+  assert.equal(gateCalls, 0, '不传图时门闩也不该被问')
+})

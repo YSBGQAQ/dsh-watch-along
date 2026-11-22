@@ -93,6 +93,9 @@ export function createWaker({
   // 图直接附在消息里（2026-11-23）：这种情况下不必再要求它调工具 ——
   // 它一睁眼就有画面，多一次工具往返纯属浪费 2 秒。
   attachImages = false,
+  // 完全不传图时（imageQuality=none）连"强制看图"也一起关掉：
+  // 否则它会为了看图去调工具，而工具最后还是要传一张图。
+  forceLook = true,
   maxFrameNudges = 3, // 连续催几次还不动，就放弃强制，恢复发数据（防死锁）
   maxMisses = 5,
   summaryWindowMs = 180_000,
@@ -182,7 +185,7 @@ export function createWaker({
         const nudge = JSON.stringify({
           at: new Date(now()).toTimeString().slice(0, 8),
           image: sid ?? null,
-          mustSee: frameHint(sid),
+          ...(forceLook ? { mustSee: frameHint(sid) } : {}),
           why: '上一轮没有看图，这一轮不给新数据（静默观察）',
         })
         lastObserveAt = now()
@@ -326,7 +329,7 @@ export function createWaker({
       windowSec: gapSec,
       image: sid ?? null,
       // 强制看图：说话这一轮必须先把画面看一遍（所有轮次都要，见 observe 里的同一道闸）。
-      mustSee: frameHint(sid),
+      ...(forceLook ? { mustSee: frameHint(sid) } : {}),
       events: picked.map(packEvent),
       prompt: renderPrompt(promptTemplate, gapSec),
     }
