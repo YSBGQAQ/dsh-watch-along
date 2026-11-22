@@ -183,11 +183,18 @@ export function createSupervisor({
   /** 只绑 127.0.0.1 的面板接口：GET /status、POST /start。 */
   function serve(port = cfg.ports.panel) {
     const server = http.createServer(async (req, res) => {
-      // 面板在渲染进程里，跨源必须放开；但只绑回环，外部访问不到
+      // 面板在渲染进程里，跨源必须放开；但只绑回环，外部访问不到。
+      // **Allow-Headers 不能漏**：POST /settings 带 content-type: application/json，
+      // 浏览器会先发 OPTIONS 预检；不声明这个头，预检就被拒 → 前端只看到 "Failed to fetch"。
       res.setHeader('Access-Control-Allow-Origin', '*')
       res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
+      res.setHeader('Access-Control-Allow-Headers', 'content-type')
+      res.setHeader('Access-Control-Max-Age', '600')
       res.setHeader('Content-Type', 'application/json; charset=utf-8')
-      if (req.method === 'OPTIONS') return res.end('{}')
+      if (req.method === 'OPTIONS') {
+        res.statusCode = 204
+        return res.end()
+      }
       try {
         if (req.url?.startsWith('/status')) return res.end(JSON.stringify(await status()))
         if (req.url?.startsWith('/start')) return res.end(JSON.stringify(await start()))

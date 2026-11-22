@@ -26,7 +26,10 @@ window.__ModuleLoader__.load({
     ]
 
     const styles = {
-      wrap: { padding: '16px 18px', fontFamily: 'inherit', lineHeight: 1.7 },
+      // 面板内容比可视区高，宿主不给滚动 → 自己滚。height+overflowY 缺一不可。
+      // 面板内容比可视区高，宿主不给滚动 → 自己滚。
+      // height:100% 在父容器无固定高度时解析成 auto（不滚），所以再兜一个 maxHeight:100vh。
+      wrap: { padding: '16px 18px', fontFamily: 'inherit', lineHeight: 1.7, height: '100%', maxHeight: '100vh', overflowY: 'auto', boxSizing: 'border-box' },
       title: { fontSize: 15, fontWeight: 600, margin: '0 0 4px' },
       intro: { fontSize: 12, opacity: 0.62, margin: '0 0 14px' },
       group: { marginBottom: 16 },

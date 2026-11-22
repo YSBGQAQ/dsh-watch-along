@@ -130,3 +130,24 @@ test('POST 体不是 JSON 也要给得出人话', () => {
   assert.equal(r.body.ok, false)
   assert.match(r.body.rejected[0].reason, /JSON/)
 })
+
+// ── 预检：带 content-type 的 POST 会先发 OPTIONS，不声明 Allow-Headers 就全废 ──
+test('面板接口的 CORS 头要允许 content-type（否则 POST /settings 变 Failed to fetch）', async () => {
+  const sup = createSupervisor({
+    config: { ready: true, missing: [], ports: { ocr: 1, asr: 2, panel: 18791 }, rootDir: '/r', python: 'p', whisperDir: 'w' },
+    fetchImpl: async () => ({ ok: false, status: 502 }),
+    settingsFile: tmpFile(),
+  })
+  const server = sup.serve(18791)
+  await new Promise((r) => setTimeout(r, 60))
+  try {
+    const res = await fetch('http://127.0.0.1:18791/settings', {
+      method: 'OPTIONS',
+      headers: { origin: 'http://localhost', 'access-control-request-method': 'POST', 'access-control-request-headers': 'content-type' },
+    })
+    assert.equal(res.headers.get('access-control-allow-origin'), '*')
+    assert.match(String(res.headers.get('access-control-allow-headers')), /content-type/i)
+  } finally {
+    server.close()
+  }
+})
