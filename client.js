@@ -152,7 +152,7 @@ window.__ModuleLoader__.load({
           {
             name: 'settings.section',
             id: 'watch-along',
-            order: 210,
+            order: 25, // 紧跟宿主的「插件」(15)。原来 210 排在最下面，用户根本找不到
             label: () => '陪看',
             inject: () => ({ ctx }),
           },

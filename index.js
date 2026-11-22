@@ -344,8 +344,15 @@ export function apply(ctx, opts = {}) {
 
   // 服务管家：设置面板靠它显示"服务未启用"、以及一键启动。
   // 只绑 127.0.0.1，外部访问不到；面板在渲染进程里，只能走本机回环。
+  // 注销清单要**在第一次 push 之前**声明：插在服务管家之后会让 apply 直接抛
+  // ReferenceError（2026-11-22 实踩：插件在 DSH 里显示"异常"，而 plugin.log 只到
+  // "循环等 watch_start 再起"就断了）。
+  const disposers = []
+
   const supervisor = createSupervisor({ log: both, rootDir: HERE })
-  const panelServer = supervisor.serve()
+  // 测试/预检模式不占端口（监听中的 server 会让进程不退出，把测试挂死）
+  const skipPanel = opts.panel === false || process.env.WATCH_ALONG_NO_PANEL === '1'
+  const panelServer = skipPanel ? null : supervisor.serve()
   disposers.push(() => {
     try {
       panelServer?.close?.()
@@ -387,7 +394,6 @@ export function apply(ctx, opts = {}) {
     },
   })
 
-  const disposers = []
   // 关插件时停掉陪看循环，否则定时器会一直跑（Node 的 unref 只保证不阻退出）
   if (watchLoop) disposers.push(() => watchLoop.stop('dispose'))
   svcRef = service
