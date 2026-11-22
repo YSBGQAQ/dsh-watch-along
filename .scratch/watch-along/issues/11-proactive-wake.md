@@ -4,7 +4,7 @@
 
 **Blocked by:** 02（事件队列）
 
-**Status:** claimed（判定层已实现并有 12 条测试；接线待一轮 DSH 实机验证，两个宿主字段名仍是猜的）
+**Status:** open（**接线受阻**：宿主没向插件暴露 `sessionController`，实测 `sessionController=无`；判定层已完成、75 条测试绿，只差接上宿主那一段）
 
 ## 决策（与用户逐条敲定，2026-11-21 10:46）
 
@@ -81,6 +81,26 @@
 
 **因此 `hasUserMessageSince` 先传 `null`**：走票里写好的保守分支（不计数、只保留主动唤醒、
 不自动停）。等第 2 条确认后再接 `sessionQuery.filterEvents`，「5 次自动停」那条才会生效。
+
+### 2026-11-22 实机探测：宿主没把 sessionController 暴露给插件
+
+`plugin.log` 里那一轮真实加载（`2026-11-22T11:41:56Z`）打出：
+
+```
+主动唤醒：关（WATCH_ALONG_WAKE=1 打开）；sessionController=无
+```
+
+静态侧也对得上：宿主里它的注册是 `super(ctx, "sessionController", { namespace: "session" })`
+（`dsh-api-session-controller/lib/index.js`），注册在**宿主 API 那个作用域**；
+而第三方插件是被 `cordis.patch.yml` insert 进 **profile 作用域** 的。两个作用域不重合，
+所以 `ctx.get('sessionController')` 拿到 null —— 不是名字写错，也不是加载时序问题。
+
+**还差一个对照实验（要一次生效的重启）**：探测代码已把 `attachments` 一起打
+（它是已知能拿到的，出图靠它）。若 `attachments:true` + `sessionController:false`，
+就确认是"作用域隔离"而不是"`get()` 这条通路在插件里整个不可用"。届时再定接法：
+找宿主给插件开放的路（`ctx.hostApi` / `ctx.remote.session` / 或申请把该服务挂到 profile）。
+
+**因此本轮到此为止**：判定层 12 条测试全绿、逻辑完备，接线这一段单独拾起即可，不用重做。
 
 ### 审查指出、本轮没做的三条（spec 与实现不一致，得说清）
 
