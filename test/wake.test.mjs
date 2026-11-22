@@ -266,3 +266,27 @@ test('observe() 只说"别说话"，不带陪聊提示词', async () => {
   assert.doesNotMatch(sent[0], /说两句/, '观察轮不该带陪聊指令，否则它又会开口')
   assert.match(sent[0], /sheetId:"S1"/)
 })
+
+// ── 提示词只发一次：之后只带数据，避免"每条都像这一帧的回复" ──────────
+test('markIntroSent 之后不再重复角色设定，只带一句短指令', async () => {
+  const sent = []
+  const w = createWaker({
+    enabled: true,
+    minGapMs: 0,
+    gapSec: 30,
+    promptTemplate: '你是搭子，必须有自己思考',
+    send: async (t) => sent.push(t),
+    format: (e) => `- ${e.text}`,
+  })
+  w.feed({ kind: 'ocr', text: '别开窗', t: 1, at: Date.now() - 1000 })
+  w.markIntroSent()
+  await w.maybeWake({ kind: 'motion', strength: 'high', text: '切镜' })
+  assert.match(sent[0], /【陪聊】/)
+  assert.doesNotMatch(sent[0], /必须有自己思考/, '提示词又被重复发了一遍')
+  assert.match(sent[0], /别开窗/, '数据没带上')
+})
+
+test('introText 就是那段规则原文', () => {
+  const w = createWaker({ enabled: true, promptTemplate: '规则 A', send: async () => {} })
+  assert.match(w.introText(), /规则 A/)
+})

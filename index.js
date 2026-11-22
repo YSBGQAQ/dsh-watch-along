@@ -302,12 +302,18 @@ export function apply(ctx, opts = {}) {
   let lastWokeSeq = 0
   let lastSheet = null // 最近一张拼图的编号，唤醒时交给模型看图
   let observeTimer = null // 静默观察轮的定时器（observeSec > 0 才有）
-  let observeInFlight = false // 上一条观察还没被接住
-  let observeSentAt = 0
+  let observeSentAt = 0 // 上一条观察发出的时刻
+  let observePending = false // 发出去还没等到"它动了"
+  let lastTurnMs = 0 // 上一轮从发出到它调用工具花了多久（用来算下一轮最早什么时候能发）
 
   /** 模型调了工具 = 它接住了上一条（观察轮也算）。 */
   function noteToolCall() {
-    observeInFlight = false
+    // 记下这一轮实际跑了多久：观察轮的节流线要**跟着它走**。
+    // 固定 2 秒是错的 —— 一轮要 5–8 秒时，2 秒一条只会排队（实测三分钟积了 42 条）。
+    if (observePending) {
+      lastTurnMs = Date.now() - observeSentAt
+      observePending = false
+    }
     watchLoop?.noteActivity()
   }
   if (wakeEnabled) {
@@ -419,27 +425,45 @@ export function apply(ctx, opts = {}) {
       const obs = cur.observeSec ?? 0
       if (obs > 0) {
         observeTimer = setInterval(() => {
-          // **上一轮没接住就不再发**：DSH 的消息是排队的，一秒一条会把模型越推越远，
-          // 最后它一直在补旧账、看起来像卡死。
-          if (observeInFlight && Date.now() - observeSentAt < 90_000) return
-          if (observeInFlight) {
-            // 超过 90 秒还没任何工具调用：可能这一轮它没调工具就结束了，放过这一次
-            both('静默观察：上一轮 90 秒未接住，视为结束，继续下一轮')
-            observeInFlight = false
+          const since = observeSentAt ? Date.now() - observeSentAt : Infinity
+          // 最早什么时候能发下一条：设置值 与 上一轮实测耗时×1.3 取大，且不低于 6 秒。
+          // DSH 的消息是排队的，发得比模型跑得快，队列就会一直涨（实测 42 条）。
+          const floor = Math.max(obs * 1000, Math.round(lastTurnMs * 1.3), 6000)
+          if (since < floor) return
+          if (observePending && since > 120_000) {
+            both('静默观察：上一轮 120 秒无动静，视为已结束')
+            observePending = false
           }
-          observeInFlight = true
+          observePending = true
           observeSentAt = Date.now()
           waker?.observe?.().catch?.((e) => {
-            observeInFlight = false
+            observePending = false
             both(`静默观察出错：${e?.message ?? e}`)
           })
-        }, obs * 1000)
+        }, Math.max(1000, Math.round(obs * 500)))
         try {
           observeTimer.unref?.()
         } catch {
           /* 非 Node 定时器 */
         }
         both(`静默观察已开启：每 ${obs} 秒一次（只更新理解，不输出文字）`)
+      }
+
+      // 规则说明**单独发一次**：之后每条唤醒只带数据。
+      // 每条都重复一遍角色设定，会话里会密成一片，模型还会把它当成"这一帧的回复"。
+      try {
+        const intro = waker?.introText?.()
+        if (intro && lastAgent) {
+          const r = deliverToAgent(
+            lastAgent,
+            `${intro}\n\n（以上是规则，以后每条我只给数据和画面编号，你按这个规则说 1–2 句；没叫你说话时不要输出文字。）`,
+            { sessions: sessionsOf(ctx) },
+          )
+          if (r.ok) waker?.markIntroSent?.()
+          both(`陪看规则已单独发送（flush=${r.flushed === null ? '无 sessions' : r.flushed}）`)
+        }
+      } catch (e) {
+        both(`陪看规则发送失败：${e?.message ?? e}`)
       }
 
       // 每一次 watch_start 都让循环重新起跑（含"上次已收工"的情况）

@@ -94,6 +94,7 @@ export function createWaker({
   format = formatEvent,
 } = {}) {
   let events = []
+  let introSent = false
   let lastWakeAt = 0
   let misses = 0
   let exhausted = false
@@ -169,7 +170,11 @@ export function createWaker({
     // 这条文案就是"陪聊"的全部指令 —— 模型看不到别的说明。
     // 2026-11-22 之前的写法是「只说了这一句就够，别复述整段」，
     // 结果它真的每帧碎碎念一句（三分钟七十多轮），和"影评人式陪聊"正好相反。
-    const head = renderPrompt(promptTemplate, gapSec)
+    // 提示词**只发一次**（watch_start 时单独发），之后每条只带数据。
+    // 每条都带一遍角色设定的话，会话里会密集成一片，而且模型容易把它当成"这一帧的回复"。
+    const head = introSent
+      ? `【陪聊】按之前给你的规则，说 1–2 句。`
+      : renderPrompt(promptTemplate, gapSec)
     // 带上拼图编号：光有文字，模型只能评价"发生了什么"；看了图才能谈镜头与表演。
     // 这是 see-now 的 peek 模式（叫醒 → 先取图 → 再说）。
     const sid = (() => {
@@ -188,7 +193,7 @@ export function createWaker({
     const elapsed = maxT ? `，本次陪看已进行 ${Math.floor(maxT / 60)} 分 ${Math.round(maxT % 60)} 秒` : ''
     const when = `现在 ${clockNow}${elapsed}`
     const prompt = text
-      ? `${head}\n\n${when}。过去 ${gapSec} 秒屏幕上发生的（方括号里是时刻 / 相对秒数）：\n${text}${seeFirst}`
+      ? `${head}\n\n${when}。过去 ${gapSec} 秒：\n${text}${seeFirst}`
       : `${head}\n\n（过去 ${gapSec} 秒没有可复述的新内容，安静陪着就好，不用开口。）${seeFirst}`
     try {
       await send(prompt)
@@ -202,8 +207,14 @@ export function createWaker({
     return { woke: true, text: prompt }
   }
 
+  /** 提示词已经单独发过了：之后的唤醒只带数据。 */
+  function markIntroSent(v = true) {
+    introSent = v
+  }
+
   function reset() {
     events = []
+    introSent = false
     lastWakeAt = 0
     misses = 0
     exhausted = false
@@ -213,6 +224,9 @@ export function createWaker({
     feed,
     maybeWake,
     observe,
+    markIntroSent,
+    /** 首条要发的那段"规则说明"（由调用方单独发出去）。 */
+    introText: () => renderPrompt(promptTemplate, gapSec),
     reset,
     get state() {
       return { misses, exhausted, lastWakeAt, buffered: events.length }
