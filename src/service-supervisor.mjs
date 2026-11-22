@@ -13,6 +13,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { spawn, execFileSync } from 'node:child_process'
 import { DEFAULTS, loadSettings, saveSettings } from './settings.mjs'
+import { defaultStartupLogFile } from './startup-log.mjs'
 
 export const DEFAULT_PORTS = { ocr: 8765, asr: 8766, panel: 8790 }
 
@@ -129,16 +130,28 @@ export function createSupervisor({
   fetchImpl = globalThis.fetch,
   spawnImpl = spawn,
   log = () => {},
+  // 采集状态（running / failed + 原因）。面板靠它报"采集中断了，请重启服务"。
+  // 不传就是 null：单测和"只起服务不开陪看"的场景不需要它。
+  watchStatus = null,
 } = {}) {
   // rootDir 必须显式传插件目录：宿主进程的 cwd 不是仓库根，读不到 services.json
   const cfg = config ?? resolveConfig(process.env, { rootDir: rootDir ?? process.cwd() })
 
   async function status() {
-    // 日志地址随状态一起发：面板拿不到文件系统，只能靠这里告诉它
-    const startupLog = cfg.rootDir ? `${cfg.rootDir}/.scratch/run/startup.jsonl` : null
+    // 日志地址随状态一起发：面板拿不到文件系统，只能靠这里告诉它。
+    // 位置跟着 defaultStartupLogFile 走（Documents 下），别再写死 .scratch ——
+    // 2026-11-23 改了实际写入位置，面板这行漏改，会指到一个空的旧文件。
+    const startupLog = defaultStartupLogFile()
     const [ocr, asr] = await Promise.all([probe(cfg.ports.ocr, { fetchImpl }), probe(cfg.ports.asr, { fetchImpl })])
+    let watch = null
+    try {
+      watch = watchStatus ? watchStatus() : null
+    } catch {
+      watch = null
+    }
     return {
       startupLog,
+      watch,
       ok: true,
       configured: cfg.ready,
       missing: cfg.missing,

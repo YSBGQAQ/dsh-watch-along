@@ -569,7 +569,13 @@ export function apply(ctx, opts = {}) {
   // "循环等 watch_start 再起"就断了）。
   const disposers = []
 
-  const supervisor = createSupervisor({ log: both, rootDir: HERE, settingsFile })
+  const supervisor = createSupervisor({
+    log: both,
+    rootDir: HERE,
+    settingsFile,
+    // 采集中断时面板要能看见原因并提示重启服务（不做自动恢复）
+    watchStatus: () => service.status(),
+  })
   // 测试/预检模式不占端口（监听中的 server 会让进程不退出，把测试挂死）
   const skipPanel = opts.panel === false || process.env.WATCH_ALONG_NO_PANEL === '1'
   const panelServer = skipPanel ? null : supervisor.serve()

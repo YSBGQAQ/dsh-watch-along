@@ -216,6 +216,20 @@ window.__ModuleLoader__.load({
             : h('div', { style: { marginTop: 8, color: '#c0392b', fontWeight: 600 } },
                 '服务未启用：' + down.map((x) => x.name).join('、')),
 
+        // 采集中断：不自动恢复，只把原因摆在面板上，让人去点「重启服务」。
+        // 2026-11-23 用户决定：故障恢复不做，页面报告 + 提示重启即可。
+        st.watch && st.watch.state === 'failed'
+          ? h('div', { style: { marginTop: 8, color: '#c0392b', fontWeight: 600, lineHeight: 1.6 } },
+              '采集中断：' + (st.watch.reason || '未知原因'),
+              h('br', null),
+              h('span', { style: { fontWeight: 400, opacity: 0.85 } },
+                '请点下面的「重启服务」，再重新 watch_start'))
+          : null,
+        st.watch && st.watch.state === 'running'
+          ? h('div', { style: { marginTop: 8, opacity: 0.7, fontSize: 12 } },
+              '正在采集：' + (st.watch.window || '?') + '（' + (st.watch.frames || 0) + ' 帧）')
+          : null,
+
         // 启动日志地址：出环境问题时让人知道去哪看。路径由后端给，面板不猜。
         st.startupLog
           ? h('div', { style: { marginTop: 8, fontSize: 11.5, opacity: 0.55, lineHeight: 1.6 } },

@@ -51,6 +51,29 @@ test('status：服务在跑就读出 ready 与设备名', async () => {
   assert.equal(s.services[0].detail, '扬声器')
 })
 
+test('status 带上采集状态：采集中断要能报到面板上', async () => {
+  const sup = createSupervisor({
+    config: { ready: true, missing: [], ports: { ocr: 1, asr: 2, panel: 3 }, rootDir: '/r', python: 'p', whisperDir: 'w' },
+    fetchImpl: async () => ({ ok: true, json: async () => ({ ready: true }) }),
+    watchStatus: () => ({ state: 'failed', reason: '采集结束：窗口被关了', window: '直播', frames: 100 }),
+  })
+  const s = await sup.status()
+  assert.equal(s.watch.state, 'failed')
+  assert.match(s.watch.reason, /窗口被关了/)
+  assert.equal(s.startupLog.includes('Documents'), true, '环境日志地址没跟着挪到 Documents')
+})
+
+test('watchStatus 抛错不能让面板整个读不到状态', async () => {
+  const sup = createSupervisor({
+    config: { ready: true, missing: [], ports: { ocr: 1, asr: 2, panel: 3 }, rootDir: '/r', python: 'p', whisperDir: 'w' },
+    fetchImpl: async () => ({ ok: true, json: async () => ({ ready: true }) }),
+    watchStatus: () => { throw new Error('炸了') },
+  })
+  const s = await sup.status()
+  assert.equal(s.watch, null)
+  assert.equal(s.services.length, 2)
+})
+
 test('配置不全时拒绝启动，并把缺的配置说出来', async () => {
   const sup = createSupervisor({
     config: { ready: false, missing: ['WATCH_ALONG_PY（venv 的 python.exe）'], ports: { ocr: 1, asr: 2, panel: 3 } },
