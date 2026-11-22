@@ -219,7 +219,7 @@ window.__ModuleLoader__.load({
         // 启动日志地址：出环境问题时让人知道去哪看。路径由后端给，面板不猜。
         st.startupLog
           ? h('div', { style: { marginTop: 8, fontSize: 11.5, opacity: 0.55, lineHeight: 1.6 } },
-              '启动日志（每次启动记一条，最多 50 条）：',
+              '环境日志（每个会话首次使用时记一条，最多 50 条）：',
               h('br', null),
               h('code', { style: { fontSize: 11.5 } }, st.startupLog))
           : null,

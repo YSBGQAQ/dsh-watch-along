@@ -139,21 +139,41 @@ export function apply(ctx, opts = {}) {
   const settingsFile = path.join(HERE, '.scratch', 'run', 'settings.json')
   const cur = loadSettings(settingsFile).value
 
-  // 每次 DSH 启动写一条环境快照：出问题时能对比"上次能跑、这次不能"。
-  // 失败不能挡住插件加载 —— 日志是辅助，不是依赖。
+  // 环境日志是**按会话**记的，不是按进程：同一个 DSH 进程里开两个会话，
+  // 就应该是两条记录（它们的模型、上下文、设置可能不同）。
+  // 触发点是"这个会话第一次调我们的工具"——那时才拿得到 agent。
   const startupLogFile = path.join(HERE, '.scratch', 'run', 'startup.jsonl')
-  try {
-    // 用服务实际在跑的那个 python，而不是 PATH 上的（两者装的包常常不一样）
-    let pyExe = 'python'
+  const sessionsLogged = new Set()
+
+  function logSessionOnce(agent, toolName) {
+    let sid = '?'
     try {
-      pyExe = JSON.parse(fs.readFileSync(path.join(HERE, '.scratch', 'run', 'services.json'), 'utf8')).python || 'python'
+      sid = sessionOf(agent)
     } catch {
-      /* 没配过就用 PATH 上的 */
+      /* 拿不到就按未知会话记，不要因此不记 */
     }
-    const r = appendStartupLog(startupLogFile, collectEnv({ settings: cur, python: pyExe, extra: { pid: process.pid } }))
-    log(`启动日志已写入 ${r.file}（保留最近 ${r.kept} 条）`)
-  } catch (e) {
-    log(`启动日志写入失败：${e?.message ?? e}`)
+    if (sid !== '?' && sessionsLogged.has(sid)) return
+    if (sid !== '?') sessionsLogged.add(sid)
+    try {
+      // 用服务实际在跑的那个 python，而不是 PATH 上的（两者装的包常常不一样）
+      let pyExe = 'python'
+      try {
+        pyExe = JSON.parse(fs.readFileSync(path.join(HERE, '.scratch', 'run', 'services.json'), 'utf8')).python || 'python'
+      } catch {
+        /* 没配过就用 PATH 上的 */
+      }
+      const r = appendStartupLog(
+        startupLogFile,
+        collectEnv({
+          settings: cur,
+          python: pyExe,
+          extra: { scope: 'session', sessionId: sid, firstTool: toolName, pid: process.pid },
+        }),
+      )
+      log(`会话日志已写入（${sid.slice(0, 8)}… 首次调用 ${toolName}，历史共 ${r.kept} 条）`)
+    } catch (e) {
+      log(`会话日志写入失败：${e?.message ?? e}`)
+    }
   }
 
   // 画质档 → 采集尺寸。三档都是 16:9，只改分辨率：
@@ -571,6 +591,8 @@ export function apply(ctx, opts = {}) {
         async execute(args, run) {
           try {
             noteToolCall()
+            // 这个会话第一次用我们的工具 → 记一条环境快照
+            logSessionOnce(run?.agent, tool.name)
           } catch {
             /* 记账失败不影响工具本身 */
           }
