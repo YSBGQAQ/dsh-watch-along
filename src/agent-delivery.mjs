@@ -12,13 +12,19 @@ import { randomUUID } from 'node:crypto'
  * 宿主 `steer()` / `followup()` 要的是一条 user 角色的消息。
  * `source.kind` 用自定义值，方便在会话里认出"这条是我们自己塞的"。
  */
-export function userMessage(text, { source = 'watch-along', imageIds = null } = {}) {
+export function userMessage(text, { source = 'watch-along', images = null } = {}) {
   const content = [{ type: 'text', text: String(text ?? '') }]
   // 把图直接放进这条消息：模型不必再花一次往返调工具看图。
-  // 形状照抄会话里工具结果的那条（`{"type":"image","attachment":{"attachmentId":"sha256:…"}}`），
-  // 是宿主自己的格式，不是我们发明的。
-  for (const id of imageIds ?? []) {
-    if (typeof id === 'string' && id) content.push({ type: 'image', attachment: { attachmentId: id } })
+  //
+  // **必须给全描述符**（2026-11-23 07:12 踩过）：只写 { attachmentId } 会让宿主在投影
+  // 请求时校验不过，整个请求打成 `DeepSeek Messages transport failed`（实测 50 次调用
+  // 只有 1 次成功）。宿主自己写的图块长这样，六项一个不能少：
+  //   { attachmentId, mediaType, width, height, bytes, name }
+  // 字符串（只有 id）也接受，但会补成最小描述符 —— 最好不要走这条。
+  for (const img of images ?? []) {
+    if (!img) continue
+    const att = typeof img === 'string' ? { attachmentId: img } : img
+    if (att?.attachmentId) content.push({ type: 'image', attachment: att })
   }
   return {
     id: randomUUID(),
@@ -47,11 +53,11 @@ export function userMessage(text, { source = 'watch-along', imageIds = null } = 
 export function deliverToAgent(
   agent,
   text,
-  { mode = 'followup', source = 'watch-along', sessions = null, imageIds = null } = {},
+  { mode = 'followup', source = 'watch-along', sessions = null, images = null } = {},
 ) {
   if (!agent) return { ok: false, reason: 'no-agent' }
   if (typeof text !== 'string' || !text.trim()) return { ok: false, reason: 'empty-text' }
-  const message = userMessage(text, { source, imageIds })
+  const message = userMessage(text, { source, images })
   const done = (via, extra = {}) => {
     // followup 只是**排进队列**；不 flush 的话模型一直是 idle，看起来就是"自己停了"。
     // 出处：watch-together 的 `timer.js:116 wakeSession` —— followup 之后紧跟
@@ -83,7 +89,7 @@ export function deliverToAgent(
       agent.followup(msg)
       return { ok: true, extra: {} }
     } catch (e) {
-      if (imageIds?.length) {
+      if (images?.length) {
         try {
           agent.followup(userMessage(text, { source }))
           return { ok: true, extra: { imageFallback: String(e?.message ?? e) } }

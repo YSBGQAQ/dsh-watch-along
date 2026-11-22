@@ -89,9 +89,9 @@ test('只有 followup 的 agent 也能用', () => {
 })
 
 test('图随消息走：content 里多一个 image 块，形状照抄宿主', () => {
-  const msg = userMessage('看图', { imageIds: ['sha256:abc123'] })
+  const msg = userMessage('看图', { images: [{ attachmentId: 'sha256:abc123', mediaType: 'image/png', width: 640, height: 360, bytes: 1234, name: 'a.png' }] })
   assert.equal(msg.content.length, 2)
-  assert.deepEqual(msg.content[1], { type: 'image', attachment: { attachmentId: 'sha256:abc123' } })
+  assert.deepEqual(msg.content[1], { type: 'image', attachment: { attachmentId: 'sha256:abc123', mediaType: 'image/png', width: 640, height: 360, bytes: 1234, name: 'a.png' } })
 })
 
 test('没有图时 content 只有文本，不多塞空块', () => {
@@ -110,7 +110,7 @@ test('宿主不认 image 块：退回纯文本，不能让这一轮叫不醒', (
     },
     status: 'idle',
   }
-  const r = deliverToAgent(agent, '看图', { imageIds: ['sha256:abc'] })
+  const r = deliverToAgent(agent, '看图', { images: [{ attachmentId: 'sha256:abc', mediaType: 'image/png', width: 1, height: 1, bytes: 1, name: 'a.png' }] })
   assert.equal(r.ok, true, '应该退回文本并成功')
   assert.equal(calls, 2, '先带图失败，再发纯文本')
   assert.match(r.imageFallback, /unsupported/)

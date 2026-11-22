@@ -387,12 +387,10 @@ export function apply(ctx, opts = {}) {
         return null
       }
     }
-    // **2026-11-23 07:12 实测：这条路会让模型调用几乎全部失败** ——
-    // 会话记录里 50 次 finish=error、只有 1 次 stop，41 次 llm/retry，
-    // 错误是 `DeepSeek Messages transport failed`。图确实进了 user 消息，
-    // 但宿主/模型侧不接受这种输入，每一个带图的请求都打成 TRANSPORT。
-    // 关掉：退回"工具调用看图"（那条路 90 分钟 0 报错）。留着代码，等宿主支持再开。
-    const ATTACH_IMAGE_IN_MESSAGE = false
+    // 2026-11-23 07:12 第一次开：只给了 attachmentId，宿主校验不过 → 50 次调用 1 次成功。
+    // 07:15 找到根因：宿主自己的图块是六项描述符（mediaType/width/height/bytes/name 都要）。
+    // 补齐后重开；一旦日志里再出现 `图被拒` 或 finish=error 连片，立刻关掉。
+    const ATTACH_IMAGE_IN_MESSAGE = true
     const canAttach = ATTACH_IMAGE_IN_MESSAGE && !!attachmentsOf()?.saveImage
     waker = createWaker({
       enabled: true,
@@ -413,28 +411,36 @@ export function apply(ctx, opts = {}) {
         if (!lastAgent) throw new Error('还没绑定会话：先调用一次 watch_start')
         // 把当前帧**直接附在这条消息里**：模型不用再花一次往返去调 watch_frame。
         // 实测（2026-11-23）：调工具那条路每轮 2 个 step、约 4 秒；附在消息里只要 1 个 step。
-        let imageIds = null
+        let images = null
         try {
           if (!canAttach) throw new Error('宿主没有 attachments 服务')
           const shot = await service.frame({ live: true, maxWidth: 640 })
           const svc = attachmentsOf()
           if (svc?.saveImage) {
-            const ref = await svc.saveImage.call(svc, {
-              data: shot.png,
-              mediaType: 'image/png',
-              name: `wake-${Date.now()}.png`,
-            })
-            const id = typeof ref === 'string' ? ref : (ref?.attachmentId ?? ref?.id ?? null)
-            if (id) imageIds = [String(id)]
+            const name = `wake-${Date.now()}.png`
+            const ref = await svc.saveImage.call(svc, { data: shot.png, mediaType: 'image/png', name })
+            // 描述符六项必须齐（attachmentId/mediaType/width/height/bytes/name），
+            // 少一项宿主就会把整个请求打成 TRANSPORT —— 2026-11-23 07:12 就是这么挂的。
+            const att = ref && typeof ref === 'object' ? { ...ref } : { attachmentId: String(ref ?? '') }
+            if (!att.attachmentId) throw new Error('saveImage 没给 attachmentId')
+            att.mediaType ||= 'image/png'
+            att.width ??= shot.width
+            att.height ??= shot.height
+            att.bytes ??= shot.png.length
+            att.name ||= name
+            images = [att]
           }
         } catch (e) {
           both(`唤醒附图失败，本条走纯文本：${e?.message ?? e}`)
         }
-        const r = deliverToAgent(lastAgent, text, { sessions: sessionsOf(ctx), imageIds })
+        const r = deliverToAgent(lastAgent, text, { sessions: sessionsOf(ctx), images })
         if (!r.ok) throw new Error(`投递失败：${r.reason}`)
         // 图已经随消息送到，门闩不必再催它调工具。
-        if (imageIds && !r.imageFallback) lastFrameAt = Date.now()
-        both(`唤醒投递 ${r.via}（flush=${r.flushed === null ? '没有 sessions 服务' : r.flushed}）`)
+        if (images && !r.imageFallback) lastFrameAt = Date.now()
+        both(
+          `唤醒投递 ${r.via}（flush=${r.flushed === null ? '没有 sessions 服务' : r.flushed}）` +
+            `${images ? '＋图' : ''}${r.imageFallback ? '（图被拒，已退回文本）' : ''}`,
+        )
       },
       // 读会话历史要 sessionController，而宿主没把它给插件（实测取不到）。
       // 传 null = waker 走保守分支：不计数，只保留主动唤醒、不自动停。
