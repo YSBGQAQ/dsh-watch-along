@@ -241,3 +241,28 @@ function callerSessionOf(run) {
    多会话并存时可能发错人。下一轮要改成 start 时记录。
 3. **「最小间隔可配」「`wakeMaxMisses` 可调」只停在函数参数层面** —— `index.js` 没从设置里
    传值（settings 未接运行时，票 07 已关），实际固定 120 秒 / 5 次。与 `audioSource` 是同一个缺口。
+
+### 2026-11-22 决策变更：跟 see-now 一致，"有动静就说"，不按强度筛
+
+票面原写「AI 到精彩的地方会自动发话」，一度打算改成只认 `high`/`cut`。**用户拍板不这么改**：
+
+> 那算了，改成和 see-now 一样就行……另外设置界面留三档可设置
+
+理由：see-now 本来就是**有新帧就叫**（按节奏，不按强度），"只在高潮说"会让慢节奏片十几分钟不吭声，
+陪看感没了。代价是费 token，用户接受。
+
+**它的 loop 不能直接复用**：`src/loop.js` 绑死在它自己的 `runner` / `pipeline` / `speech` / `window` 上。
+做法是**照规则重写、常量原样抄**（行为对齐、代码独立），对照表：
+
+| see-now | 我们 | 状态 |
+|---|---|---|
+| 有新帧就叫，不筛强度 | `hasNews()` = 有新事件 | ✅ |
+| `noteActivity` 一次只许一条在飞 | `inFlight` + 工具调用记账 | ✅ |
+| `PACES` calm 30 / normal 15 / dense 8 | 设置项 `wakePace` | ✅ |
+| `MAX_AUTONOMOUS_WAKES = 8` | 设置项 `maxWakes`（1–200） | ✅ |
+| `IDLE_STOP_MS = 3min` | 设置项 `idleStopMin`（0 = 不收工） | ✅ |
+| `WAKE_MIN_GAP_MS = 8000` | dense 档的 8 秒即地板 | ✅ |
+
+**尚未实机跑过**：循环只在 `watch_start` 之后起跑，部署后还没触发过一次完整链路
+（日志里最后一条投递是 20:33，早于循环上线）。验证方式：DSH 里说"开始陪看"，
+`plugin.log` 应出现 `陪看循环已启动`，随后每隔 `wakePace` 秒最多一条 `唤醒投递 followup（flush=true）`。
