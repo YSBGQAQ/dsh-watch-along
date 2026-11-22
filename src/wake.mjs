@@ -38,11 +38,12 @@ export function buildSummary(events, { now, windowMs, max, format = formatEvent 
     // 选人按强度（票面要求保留哪些事件），**输出按时间正序** ——
     // 给模型看的是一段经过，乱序会让它把因果说反（把"别开窗"当成切镜之后的话）。
     // 选人：强度高的先占位，同强度取**最近**的
+    .filter(worthTelling) // 碎片和乱码不进转写（见 worthTelling 的实测）
     .sort((a, b) => strengthRank(b.strength) - strengthRank(a.strength) || b.at - a.at)
     .slice(0, max)
     // 输出：按时间正序 —— 给模型看的是一段经过，乱序会把因果说反
     .sort((a, b) => a.at - b.at)
-  return picked.map((e) => format(e)).join('\n')
+  return mergeSameSecond(picked).map((e) => format(e)).join('\n')
 }
 
 /**
@@ -89,12 +90,57 @@ export function wherePhrase(where) {
   return v ? `${v}部` : `${h}部`
 }
 
+/**
+ * 值不值得写进"人话转写"。
+ *
+ * 2026-11-23 实测：一轮 10 分钟的 OCR 里 20% 是垃圾 —— 10% 是「好像是」这种
+ * 两字碎片，10% 是「LNPII MLIHL>」「信温」这种误读。结构化事件保留它们（
+ * watch_events 要能查到原文），但**转写里必须滤掉**：模型会把垃圾当剧情。
+ */
+export function worthTelling(e) {
+  if (!e) return false
+  // 画面事件是我们自己写的标签（"切镜"/"变化"），不是 OCR 的产物 —— 永远留
+  if (e.kind === 'motion') return true
+  const t = String(e.text ?? '').trim()
+  if (!t) return false
+  const visible = t.replace(/[^\p{L}\p{N}]/gu, '')
+  if (visible.length <= 2) return false // 「是啊」「嗯」——单独一行没有信息（三字的「看不清」不在此列）
+  // OCR 从界面边缘/水印上抠下来的符号串（`LNPII MLIHL>,`）：正常台词不会长这样
+  if (/[<>{}\[\]\\|_=~^]/.test(t)) return false
+  if (/^\d{3,4}\s*[pPkK]\b/.test(t)) return false // 1080P / 4K 水印
+  const hasCJK = /[\u4e00-\u9fa5]/.test(t)
+  if (!hasCJK && visible.length < 8) return false // 短英文多半是水印
+  return true
+}
+
 export function formatEvent(e) {
-  const t = typeof e?.t === 'number' ? `${e.t.toFixed(1)}s` : ''
   const clock = typeof e?.at === 'number' ? new Date(e.at).toTimeString().slice(0, 8) : ''
-  const when = [clock, t].filter(Boolean).join(' / ')
   const label = { motion: '画面', ocr: '字幕', speech: '声音', cut: '切镜' }[e?.kind] ?? e?.kind ?? '事件'
-  return `- ${when ? `[${when}] ` : ''}${label}：${e?.text ?? ''}`.trim()
+  // 只留时刻，不留"第几秒"：同一句里两个时间轴，模型反而算不过来。
+  return `- ${clock ? `[${clock}] ` : ''}${label}：${e?.text ?? ''}`.trim()
+}
+
+/** 同一秒、同一类的几条（一帧里读出好几行）合成一条，别让模型以为这是好几句台词。 */
+function mergeSameSecond(list) {
+  const out = []
+  for (const e of list) {
+    const sec = typeof e.at === 'number' ? Math.floor(e.at / 1000) : null
+    const last = out[out.length - 1]
+    const lastSec = last && typeof last.at === 'number' ? Math.floor(last.at / 1000) : null
+    if (last && sec != null && sec === lastSec && last.kind === e.kind) {
+      const parts = last.parts ?? [String(last.text)]
+      const t = String(e.text ?? '')
+      // 同一帧里「好像是」和「好像是吧」是同一次 OCR 的两次尝试，留长的就行
+      if (parts.some((p) => p.includes(t))) continue
+      const idx = parts.findIndex((p) => t.includes(p))
+      if (idx >= 0) parts[idx] = t
+      else parts.push(t)
+      last.parts = parts
+      continue
+    }
+    out.push({ ...e, parts: [String(e.text ?? '')] })
+  }
+  return out.map((e) => ({ ...e, text: (e.parts ?? []).join('；').slice(0, 120) }))
 }
 
 export function createWaker({

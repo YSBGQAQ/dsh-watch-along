@@ -5,7 +5,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { createWaker, isTrigger, buildSummary, strengthRank, wherePhrase } from '../src/wake.mjs'
+import { createWaker, isTrigger, buildSummary, strengthRank, wherePhrase, worthTelling } from '../src/wake.mjs'
 
 /** 可控时钟 + 记录发送。 */
 function harness(opts = {}) {
@@ -152,29 +152,29 @@ test('摘要：只取最近 3 分钟、最多 20 条、按强度排序', () => {
   const now = 1_000_000
   const events = []
   for (let i = 0; i < 40; i++) {
-    events.push({ at: now - i * 1000, strength: i % 3 === 0 ? 'high' : 'low', text: `e${i}` })
+    events.push({ at: now - i * 1000, strength: i % 3 === 0 ? 'high' : 'low', text: `台词第${i}句` })
   }
-  events.push({ at: now - 600_000, strength: 'high', text: '旧事件' }) // 超出窗口
+  events.push({ at: now - 600_000, strength: 'high', text: '很久以前的旧事件' }) // 超出窗口
   const s = buildSummary(events, { now, windowMs: 180_000, max: 20, format: (e) => e.text })
   const lines = s.split('\n')
   assert.equal(lines.length, 20, `条数不对：${lines.length}`)
-  assert.ok(!lines.includes('旧事件'), '窗口外的事件混进来了')
+  assert.ok(!lines.includes('很久以前的旧事件'), '窗口外的事件混进来了')
   // 选人按强度（票面要求），但输出按时间正序 —— 给模型看的是一段经过。
   // 所以 newest 的 e0 应当在最后，且它必须被选中（它是 high）
-  assert.equal(lines[lines.length - 1], 'e0', `最新那条不在末尾，实际是 ${lines[lines.length - 1]}`)
-  assert.ok(lines.includes('e0'), 'high 强度的事件没被选中')
+  assert.equal(lines[lines.length - 1], '台词第0句', `最新那条不在末尾，实际是 ${lines[lines.length - 1]}`)
+  assert.ok(lines.includes('台词第0句'), 'high 强度的事件没被选中')
 })
 
 test('摘要按强度优先挑：high 先占位，剩下的按时间取最近的', () => {
   const now = 1_000_000
   const events = [
-    { at: now - 1000, strength: 'low', text: 'low1' },
-    { at: now - 2000, strength: 'high', text: 'high1' },
-    { at: now - 3000, strength: 'low', text: 'low2' },
+    { at: now - 1000, strength: 'low', text: '这是一句低强度台词' },
+    { at: now - 2000, strength: 'high', text: '这句是高强度台词' },
+    { at: now - 3000, strength: 'low', text: '另一句低强度台词' },
   ]
   const s = buildSummary(events, { now, windowMs: 60_000, max: 2, format: (e) => e.text })
   // high1 凭强度先占一个位；剩下一个位给"最新的 low"，也就是 low1（不是更旧的 low2）
-  assert.equal(s, 'high1\nlow1')
+  assert.equal(s, '这句是高强度台词\n这是一句低强度台词')
 })
 
 test('isTrigger / strengthRank 的边界', () => {
@@ -249,7 +249,7 @@ test('摘要按时间正序、每条标来源、带时刻', () => {
   const lines = text.split('\n')
   assert.match(lines[0], /画面：切镜/, '顺序或来源标错了')
   assert.match(lines[1], /声音：这风不对啊/)
-  assert.ok(lines[0].includes('742.5s'), '缺相对秒数')
+  assert.match(lines[0], /\[\d{2}:\d{2}:\d{2}\]/, '缺时刻')
 })
 
 // ── 静默观察轮 ──────────────────────────────────────────────
@@ -509,4 +509,25 @@ test('说话那轮带上人话转写（buildSummary 的产物之前被丢了）'
   const j = JSON.parse(sent[0])
   assert.match(j.brief, /字幕：那怪物该不会上来了吧/, 'brief 没带上事件原文')
   assert.ok(Array.isArray(j.events), '结构化事件仍要在（模型要拿 sheetId）')
+})
+
+test('转写过滤：碎片、乱码、分辨率水印不进，画面事件永远进', () => {
+  assert.equal(worthTelling({ kind: 'ocr', text: '是啊' }), false, '两字碎片该滤掉')
+  assert.equal(worthTelling({ kind: 'ocr', text: 'LNPII MLIHL>,' }), false, '符号串该滤掉')
+  assert.equal(worthTelling({ kind: 'ocr', text: '1080P 高河' }), false, '分辨率水印该滤掉')
+  assert.equal(worthTelling({ kind: 'ocr', text: '消防柜是在前面吗' }), true, '正常台词要留')
+  assert.equal(worthTelling({ kind: 'motion', text: '切镜' }), true, '画面事件不是 OCR 产物，永远留')
+  assert.equal(worthTelling({ kind: 'speech', text: '通知我靠近' }), true)
+})
+
+test('同一秒同一类的几条合成一条（一帧读出的多行不是好几句台词）', () => {
+  const now = 1_000_000
+  const s = buildSummary(
+    [
+      { kind: 'ocr', text: '好像是吧', at: now - 1000 },
+      { kind: 'ocr', text: '看不清', at: now - 900 },
+    ],
+    { now, windowMs: 60_000, max: 10, format: (e) => e.text },
+  )
+  assert.equal(s, '好像是吧；看不清')
 })
