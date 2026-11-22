@@ -20,3 +20,12 @@
 - `ocr_service.py` 的模型在 wheel 里（`rapidocr/models/*.onnx`），不需要配置路径
 - 启动脚本用 `start "title" "<exe>" ...` 直接拉起，不再嵌套一层 shell
 - 仍缺：`scripts/setup.cmd`（建 venv + 离线装 wheel）与 README
+
+## 追加（2026-11-23）：环境包必须带 `dsh-live-compact`
+
+用户要求：**把上下文压缩插件塞进环境包**，否则别人拿到装好也在长会话里报上下文超限。
+
+- 已产出 `package/plugins/dsh-live-compact-1.1.12.tgz`（107 KB，MIT），
+  SHA256 `9185d0dc…7c4d16`
+- 安装与验证写进 `docs/downloads.md` 6.7；包目录树（6.1）也加了 `plugins\` 一行
+- 它属于 DSH 侧 JS 插件，不进 venv、不进 wheels，跟 python 依赖完全分开

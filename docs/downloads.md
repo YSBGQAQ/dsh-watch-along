@@ -154,6 +154,7 @@ cd "C:\Users\24206\Desktop\源码与作者说明\_deps\wheels"
 ├── bundled\
 │   ├── python-3.12.10-amd64.exe
 │   └── ffmpeg-9.0.2-essentials_build.7z
+├── plugins\dsh-live-compact-1.1.12.tgz  ← DSH 上下文压缩插件（107 KB，见 6.7）
 ├── samples\                             ← 合成素材，见 6.3
 └── SHA256SUMS.txt
 ```
@@ -202,3 +203,31 @@ cd "C:\Users\24206\Desktop\源码与作者说明\_deps\wheels"
 ### 6.6 合规
 
 NVIDIA 的轮子按 EULA **不属于可公开再分发的产物**。用户已明确决定带进包里（Q1 = b），前提是这份包**只做私下转发、不公开挂出**。详见 ADR 0004。若要公开发布，先剔除 `nvidia_*` wheel，README 改成一条 `pip install`。
+
+### 6.7 附加插件：`dsh-live-compact`（上下文压缩）
+
+包内：`plugins\dsh-live-compact-1.1.12.tgz`（107 KB）
+SHA256：`9185d0dc0e84a0467d62682452beb26bf670f8ab1517be7370a9ed0e887c4d16`
+许可：MIT（上游 MerkyorLynn/dsh-live-compact）
+
+**为什么必须带**：陪看是长会话——每 30 秒一条唤醒、每条消息还带一张拼图，上下文一直涨。
+30 分钟就能把一轮对话顶到窗口上限，之后模型开始报上下文超限、或者干脆不响应。
+这个插件就地压缩最老的一轮、保留前缀，模型不会因为"记不住前面"而答非所问。
+
+**怎么装**（两步，不改任何代码）：
+
+1. 把 `plugins\dsh-live-compact-1.1.12.tgz` 放到 DSH 的 profile 目录下，然后在 profile 的
+   `package.json` 里加两处：
+
+   ```json
+   "dependencies": { "dsh-live-compact": "file:./plugins/dsh-live-compact-1.1.12.tgz" },
+   "dsh": { "profile": { "bundles": [ "…", "dsh-live-compact" ] } }
+   ```
+
+2. 在 profile 目录执行 `pnpm install --offline`（或宿主自带的插件安装命令），然后重启 DSH。
+
+**怎么确认装上了**：DSH 侧栏出现「上下文压缩」入口；跑一场 30 分钟以上的陪看，
+日志里不再出现上下文超限的报错。
+
+> 注意：它是 **DSH 侧的 JavaScript 插件**，不需要 venv、不需要 python，跟上面的环境包互不影响。
+> 不带它的后果不是"少个功能"，而是长会话直接不可用 —— 这就是必须塞进必需包的原因。
