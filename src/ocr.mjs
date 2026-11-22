@@ -162,6 +162,7 @@ export function createSubtitleReader({
   // 只读埋点（2026-11-22）：统计 busy 丢帧 / 实际 OCR 耗时，每 10 拍落一条汇总。
   let feeds = 0
   let busySkips = 0
+  let ocrCalls = 0 // 真正送出去的 OCR 次数（攒批没满的那些不算）
   let ocrMsTotal = 0
 
   // 行级稳定判定（2026-11-21 改）。
@@ -234,6 +235,9 @@ export function createSubtitleReader({
     if (inFlight >= maxInFlight) { busySkips += 1; return null }
     inFlight += 1
     feeds += 1
+    // 只有真的送了一次 OCR 才计耗时。攒批没满就返回的那些调用是 1ms 级的，
+    // 混进平均会把 2.5 秒摊成 140ms，看埋点时会被骗（2026-11-23 踩过）。
+    let didOcr = false
     const feedStart = now()
     try {
       const events = []
@@ -282,6 +286,7 @@ export function createSubtitleReader({
         if (arr.length < batch) { pendingBands.set(label, arr); return { label, lines: [], batchN: 0, once: !!band.once } }
         pendingBands.set(label, [])
         const stacked = stackVertical(arr.map((x) => x.img))
+        didOcr = true
         const got = (await recognize(encode(stacked))) ?? []
         return { label, lines: got, batchN: arr.length, once: !!band.once }
       })
@@ -360,13 +365,16 @@ export function createSubtitleReader({
       return null
     } finally {
       inFlight -= 1
-      ocrMsTotal += now() - feedStart
+      if (didOcr) {
+        ocrCalls += 1
+        ocrMsTotal += now() - feedStart
+      }
       if (feeds % 10 === 0) {
         const q = frameQueue.get('bottom') ?? []
-        const avg = Math.round(ocrMsTotal / feeds)
+        const avg = ocrCalls ? Math.round(ocrMsTotal / ocrCalls) : 0
         // 复用 onDrop 的会话分文件；index.js 会把 text 截到 40 字，所以用紧凑串
-        // c= 同时在跑几路：调并发时用它确认真的并发起来了
-        onDrop?.('feed-stats', `f=${feeds} b=${busySkips} q=${q.length} a=${avg}ms c=${inFlight}`, 'feed')
+        // n= 真正的 OCR 次数（不是 feed 次数）｜a= 单次耗时｜c= 同时在跑几路
+        onDrop?.('feed-stats', `f=${feeds} n=${ocrCalls} b=${busySkips} q=${q.length} a=${avg}ms c=${inFlight}`, 'feed')
       }
     }
   }
