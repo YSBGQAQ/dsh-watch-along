@@ -383,6 +383,14 @@ export function apply(ctx, opts = {}) {
     },
     onWatchStart: () => {
       waker?.reset()
+      // 懒取 sessionController：apply 时探是拿不到的（服务注册得比插件晚），
+      // 所以改到真正要用的时候再取。有它才能自动开新会话（create / resolveAgent）。
+      const sc = safe(() => ctx.get?.('sessionController'), null)
+      both(
+        sc
+          ? `sessionController 懒取成功：${Object.keys(sc).filter((k) => typeof sc[k] === 'function').slice(0, 8).join(',') || '（无方法）'}`
+          : 'sessionController 懒取仍为空',
+      )
       lastWokeSeq = eventSeq
       // 说话间隔填 0 = 不说话：只采集，不主动开口（票 07 的备注项）
       if ((cur.wakeGapSec ?? 30) === 0) {
