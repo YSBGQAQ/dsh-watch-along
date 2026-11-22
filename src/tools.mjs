@@ -12,7 +12,7 @@ function savePng(shot, seq, dir) {
   return file
 }
 
-export function createTools({ service, listWindows, attachments = null, outDir = RUN_DIR, onAgent = null, serviceStatus = null, defaultWindow = '' }) {
+export function createTools({ service, listWindows, attachments = null, outDir = RUN_DIR, onAgent = null, onFrame = null, serviceStatus = null, defaultWindow = '' }) {
   let seq = 0
 
   /**
@@ -121,6 +121,12 @@ export function createTools({ service, listWindows, attachments = null, outDir =
         seq += 1
         const file = savePng(shot, seq, outDir)
         const { ref, via, attachmentError } = await deliver(shot.png, `watch-along-${seq}.png`)
+        // 记一笔"它真的看了"：唤醒那边靠这个时间戳决定"要不要催它看图"。
+        try {
+          onFrame?.({ seq, at: Date.now(), bytes: shot.png.length, via, ok: !attachmentError })
+        } catch {
+          /* 记账失败不能影响取帧 */
+        }
         return {
           width: shot.width,
           height: shot.height,

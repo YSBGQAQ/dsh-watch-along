@@ -343,6 +343,7 @@ export function apply(ctx, opts = {}) {
   let lastComposite = null // 最近一张"每 3 秒按时间拼出来的"多帧图
   let composeTimer = null
   let snapshotTimer = null // 每 5 分钟打一行快照：防"最后没调 watch_stop，数据全丢"
+  let lastFrameAt = 0 // 最近一次 watch_frame 的时刻（强制看图的门闩看它）
   // 拼图成败只在这里能数到（service 不知道是插件在定时拼图），汇总时一并报出去。
   let composeOk = 0
   let composeFail = 0
@@ -372,6 +373,9 @@ export function apply(ctx, opts = {}) {
       promptTemplate: cur.commentPrompt,
       sheetId: () => lastComposite ?? lastSheet,
       composeSec: 3,
+      // 强制看图：传进去的是"上一轮叫醒之后它有没有调过 watch_frame"。
+      // 没看过就不发新数据，只催它看（waker 内部有次数上限，卡不死）。
+      frameGate: (sinceWakeAt) => lastFrameAt > (sinceWakeAt ?? 0),
       gapSec: cur.wakeGapSec ?? 30,
       // send 失败只是这一拍没叫，不能影响陪看；waker 内部会捕获并记日志。
       // 投递走 agent.followup + sessions.flush（见 agent-delivery.mjs）。
@@ -605,6 +609,11 @@ export function apply(ctx, opts = {}) {
     listWindows,
     serviceStatus: () => supervisor.status(),
     defaultWindow: cur.window || '',
+    // 取帧记账：waker 靠这个时间判断"上一轮到底看没看画面"。日志留痕，方便事后核对。
+    onFrame: (info) => {
+      lastFrameAt = info?.at ?? Date.now()
+      both(`取帧 #${info?.seq ?? '?'}：${Math.round((info?.bytes ?? 0) / 1024)}KB，${info?.ok ? '已附图' : '附图失败'}`)
+    },
     // 票 11：记住"谁开的陪看"。agent 句柄来自 watch_start 的 run context，
     // 不是靠 sessionController 反查 —— 宿主没把那个服务给插件（实测取不到）。
     onAgent: (agent) => {

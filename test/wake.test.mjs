@@ -228,11 +228,13 @@ test('唤醒消息带上拼图编号，并要求先看一眼再开口', async ()
   assert.equal(j.windowSec, 30, '说话那条的窗口应是 30 秒')
 })
 
-test('没有拼图时不硬塞那句提示', async () => {
+test('没有拼图时不带 image 字段，但要求直接抓当前帧', async () => {
   const sent = []
   const w = createWaker({ enabled: true, minGapMs: 0, promptTemplate: '你是搭子', sheetId: () => null, send: async (t) => sent.push(t) })
   await w.maybeWake({ kind: 'motion', strength: 'high', text: '切镜' })
-  assert.doesNotMatch(sent[0], /watch_frame/)
+  const j = JSON.parse(sent[0])
+  assert.equal(j.image, null, '没有拼图就不该编一个编号')
+  assert.match(j.mustSee, /不带参数/, '没有拼图时要让它直接抓当前帧')
 })
 
 test('摘要按时间正序、每条标来源、带时刻', () => {
@@ -378,4 +380,46 @@ test('说话那条的闸门默认跟随 gapSec，不传 minGapMs 也不会放行
   assert.equal(b.woke, false)
   assert.equal(b.reason, 'too-soon')
   assert.equal(sent.length, 1)
+})
+
+test('强制看图：上一轮没调 watch_frame 就不给新数据，只催它看', async () => {
+  let looked = false
+  const h = harness({ frameGate: () => looked, gapSec: 1 })
+  const ev = { kind: 'motion', strength: 'high', at: h.t }
+  h.waker.feed(ev)
+
+  const first = await h.waker.maybeWake(ev)
+  assert.equal(first.woke, true)
+  assert.equal(first.nudged, undefined, '第一次叫醒不该直接催（还没有上一轮）')
+
+  // 假装它没看图：第二拍应该被拦下来，且消息里没有 events
+  h.advance(5000)
+  const second = await h.waker.maybeWake({ ...ev, at: h.t })
+  assert.equal(second.nudged, true, '没看图却没被拦')
+  const payload = JSON.parse(h.sent.at(-1))
+  assert.equal(payload.events, undefined, '催看图那条不许带事件数据')
+  assert.match(payload.mustSee, /watch_frame/)
+
+  // 看过之后恢复正常，数据回来
+  looked = true
+  h.advance(5000)
+  const third = await h.waker.maybeWake({ ...ev, at: h.t })
+  assert.equal(third.nudged, undefined)
+  assert.ok(JSON.parse(h.sent.at(-1)).events.length >= 1, '看过图之后应该恢复发数据')
+})
+
+test('强制看图：连续催满上限就放弃，别把陪看卡死', async () => {
+  const h = harness({ frameGate: () => false, gapSec: 1, maxFrameNudges: 2 })
+  const ev = { kind: 'motion', strength: 'high', at: h.t }
+  h.waker.feed(ev)
+  await h.waker.maybeWake(ev) // 第一次正常发
+  h.advance(3000)
+  await h.waker.maybeWake({ ...ev, at: h.t }) // 催 1
+  h.advance(3000)
+  await h.waker.maybeWake({ ...ev, at: h.t }) // 催 2
+  h.advance(3000)
+  const after = await h.waker.maybeWake({ ...ev, at: h.t }) // 达到上限，恢复发数据
+  assert.equal(after.nudged, undefined)
+  assert.ok(JSON.parse(h.sent.at(-1)).events, '达到上限后应该恢复发数据')
+  assert.ok(h.logs.some((m) => /催看图/.test(m)), '催看图要留日志')
 })

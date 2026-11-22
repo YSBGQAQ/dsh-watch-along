@@ -86,6 +86,11 @@ export function createWaker({
   gapSec = 30, // 用于把模板里的 {n} 换成实际秒数
   sheetId = () => null, // 最近一张拼图的编号（可能没有）
   composeSec = 3, // 这张拼图覆盖多少秒（只用于文案）
+  // 强制看图（2026-11-23）：传一个 (sinceWakeAt) => boolean 的判定，"上一轮叫醒之后有没有
+  // 调过 watch_frame"。返回 false 时，这一拍**不发新数据**，只发一条"先看图"的指令 ——
+  // 不给数据是关键，给了它照样能盲答。
+  frameGate = null,
+  maxFrameNudges = 3, // 连续催几次还不动，就放弃强制，恢复发数据（防死锁）
   maxMisses = 5,
   summaryWindowMs = 180_000,
   summaryMax = 20,
@@ -101,6 +106,7 @@ export function createWaker({
   let lastWakeAt = 0
   let misses = 0
   let exhausted = false
+  let frameNudges = 0 // 连续催看图次数（看到图就归零）
 
   /**
    * 静默观察轮：叫醒它更新理解，但**明确要求不输出任何文字**。
@@ -190,6 +196,50 @@ export function createWaker({
     if (!isTrigger(event)) return { woke: false, reason: 'not-worth-it' }
     if (lastWakeAt && now() - lastWakeAt < speakGapMs) return { woke: false, reason: 'too-soon' }
 
+    const sid = (() => {
+      try {
+        return sheetId?.() ?? null
+      } catch {
+        return null
+      }
+    })()
+
+    // ── 强制看图（2026-11-23）──────────────────────────────────────────────
+    // 为什么是"不给数据"而不是"加一句请看图"：模型拿到事件就会直接总结，
+    // 永远不会多花一轮去调工具。把数据扣住，它只有看图这一件事可做。
+    // 上限 maxFrameNudges 次，防止模型死活不调把陪看卡死。
+    if (typeof frameGate === 'function' && lastWakeAt) {
+      let looked = true
+      try {
+        looked = frameGate(lastWakeAt) !== false
+      } catch {
+        looked = true // 判定本身出错就放行，不能让记账问题停掉陪看
+      }
+      if (looked) {
+        frameNudges = 0
+      } else if (frameNudges < maxFrameNudges) {
+        frameNudges += 1
+        const nudge = JSON.stringify({
+          at: new Date(now()).toTimeString().slice(0, 8),
+          image: sid ?? null,
+          mustSee: '先调用 watch_frame（把 image 的值传给 sheetId）看当前画面，再用一句话说你看到了什么。',
+          why: '上一轮没有看图，这一轮不给新数据',
+        })
+        try {
+          await send(nudge)
+        } catch (e) {
+          log(`催看图发送失败：${e?.message ?? e}`)
+          return { woke: false, reason: 'send-failed' }
+        }
+        lastWakeAt = now()
+        log(`催看图（第 ${frameNudges} 次）：上一轮没调 watch_frame，这一轮只发指令`)
+        return { woke: true, nudged: true, text: nudge }
+      } else if (frameNudges === maxFrameNudges) {
+        frameNudges += 1 // 只记一次，别每拍都刷
+        log(`连续 ${maxFrameNudges} 次催看图无效，恢复发送数据（模型可能看不到工具）`)
+      }
+    }
+
     // 上一次唤醒之后用户有没有说话 —— 只在要开口前查一次，不做实时订阅。
     if (lastWakeAt && hasUserMessageSince) {
       let replied = true
@@ -219,13 +269,7 @@ export function createWaker({
     // 结果它真的每帧碎碎念一句（三分钟七十多轮），和"影评人式陪聊"正好相反。
     // 说话那条**必带提示词**（用户明确要求）：它是这一轮该说什么的唯一依据，
     // 只放在秒级数据里会被淹没，只发一次又会被上下文挤掉。
-    const sid = (() => {
-      try {
-        return sheetId?.() ?? null
-      } catch {
-        return null
-      }
-    })()
+    // sid 已在函数开头算好（强制看图那条也要用）
     const maxT = events.reduce((m, e) => (typeof e.t === 'number' && e.t > m ? e.t : m), 0)
     // 选人看强度、输出按时间正序（见 buildSummary 的注释）
     const picked = events
@@ -237,6 +281,10 @@ export function createWaker({
       at: new Date(now()).toTimeString().slice(0, 8),
       windowSec: gapSec,
       image: sid ?? null,
+      // 强制看图：说话这一轮必须先把画面看一遍。有拼图就给编号，没有就让它直接抓当前帧。
+      mustSee: sid
+        ? '回答前先调用 watch_frame（sheetId 用 image 的值）看这一帧，再说话。'
+        : '回答前先调用 watch_frame（不带参数，抓当前帧）看画面，再说话。',
       events: picked.map(packEvent),
       prompt: renderPrompt(promptTemplate, gapSec),
     }
