@@ -33,11 +33,22 @@ MODEL_DIR = (
     or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models", "whisper-turbo")
 )
 RATE = 16000
-KEEP_SEC = 20.0    # 缓冲只留最近 20 秒：够给上下文，又不至于每次转太久
+# 2026-11-22：轮询从 3s 改成 15s 后，20s 缓冲只剩约 3s 余量，回放实测被 base 钳住 6 次。
+# 两个上限一起放大到 40s，给游标留足追赶空间（回放证明放大它们不改变识别精度）。
+KEEP_SEC = 40.0    # 缓冲只留最近 40 秒
 MARGIN_SEC = 0.8   # 句尾离缓冲边缘太近的先不发 —— 它可能还没说完
 SEEN_MAX = 200     # 记住最近 200 句的归一化文本
 PREROLL_SEC = 1.5  # 每次送音频前留的前摇：只为给模型上下文，落在里面的话不交付
-MAX_SLICE_SEC = 30.0  # 单次最多送多少秒，防止长时间没调用后一次吃到巨量音频
+MAX_SLICE_SEC = 40.0  # 单次最多送多少秒；与 KEEP_SEC 配套
+SILENT_RMS = 0.001    # 「最响的一秒」都低于这个值，才算这段真的没声音
+GAP_SEC = 6.0         # 连续这么久一句没交付，就把游标推到当前 —— 静音不许把游标钉死
+STALL_SEC = 8.0       # 这么久没有新音频块 = 录音流卡死（不是静音，是流不动了）
+# 束搜索宽度。不是上限，但再往上不划算：2026-11-22 用真实环回音轨实测
+#   1 → 81.4%（p90 156ms）｜5 → 83.6–84.0%（p90 224ms）
+#   10 → 84.5%（p90 482ms）｜20 → 82.7%（p90 1292ms，单次最长 6.8s）
+# 10 比 5 只高 0.5 点，落在同配置两次抖动（0.4 点）里；而切片追赶到 40 秒时
+# beam 10 要 4.9 秒，会掉到 3 秒轮询预算以下。故取 5。
+BEAM_SIZE = 5
 
 RUN_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".scratch", "run")
 # 每轮测试一个文件（reset 时可指定 session）。全局一个文件时，重启就清空，
@@ -56,6 +67,10 @@ ACC = {
     "stop": False,
     "error": None,
     "device": None,  # 当前录的是哪台设备的环回
+    "raw_path": None,  # WATCH_ALONG_DUMP_RAW=1 时，原始环回 PCM 的落盘路径
+    "raw_started": None,  # 本轮录音开始的墙上时间（epoch 秒）
+    "last_chunk_at": 0.0,  # 最近一次拿到音频块的时刻；体检用，判断流是不是卡死了
+    "rec": None,  # 当前打开的录音器；卡死时要靠它把流打断
 }
 
 
@@ -92,14 +107,33 @@ def load():
     from faster_whisper import WhisperModel
 
     t0 = time.time()
-    for device, ctype in (("cuda", "float16"), ("cpu", "int8")):
-        try:
-            MODEL = WhisperModel(MODEL_DIR, device=device, compute_type=ctype)
-            print(f"[asr] 模型加载完成 {time.time() - t0:.1f}s device={device}", flush=True)
-            return MODEL
-        except Exception as e:
-            print(f"[asr] {device} 不可用：{type(e).__name__}: {str(e)[:120]}", flush=True)
-    raise RuntimeError("模型加载失败（GPU 与 CPU 都试过了）")
+    # 默认且唯一走 GPU（ADR 0003）。GPU 起不来时显式报错，不许静默退到 CPU int8：
+    # 那是 1× 实时、等于没有字幕，而且用户从日志完全看不出已经降级了。
+    try:
+        MODEL = WhisperModel(MODEL_DIR, device="cuda", compute_type="float16")
+        print(f"[asr] 模型加载完成 {time.time() - t0:.1f}s device=cuda", flush=True)
+        return MODEL
+    except Exception as e:
+        raise RuntimeError(
+            f"GPU 转写不可用（{type(e).__name__}: {str(e)[:160]}）。"
+            "按 ADR 0003 不静默回退 CPU；请检查 cublas/cudnn 后重启本服务。"
+        ) from e
+
+
+def _to_mono(chunk):
+    """把录音块压成单声道 float32 一维。
+
+    **不能直接 `reshape(-1)`**：若某台设备忽略了 `channels=1` 的请求、回的是
+    `(n, 2)` 交错数据，拉平等于把左右声道当成「32k 采样率的一路信号」，
+    听感是刺啦声，Whisper 只能认出「嗯。」（see-now 的 listen.py 踩过，注释里写着）。
+
+    本机 2026-11-22 实测：请求 `channels=1` → 回 `(n, 1)`，所以今天等价于原样拉平。
+    留这道闸只为设备/USB 声卡行为变化时别静默变坏。
+    """
+    a = np.asarray(chunk, dtype=np.float32)
+    if a.ndim == 2 and a.shape[1] > 1:
+        return a.mean(axis=1)
+    return a.reshape(-1)
 
 
 def _capture_loop():
@@ -137,11 +171,30 @@ def _capture_loop():
         print(f"[asr] 开始连续录音：{spk.name}", flush=True)
         try:
             with mic.recorder(samplerate=RATE, channels=1) as rec:
+                ACC["rec"] = rec
                 nextCheck = time.time() + 2.0
+                announced = False
                 while not ACC["stop"]:
-                    chunk = np.asarray(rec.record(numframes=RATE // 4)).reshape(-1).astype(np.float32)
+                    raw = rec.record(numframes=RATE // 4)
+                    chunk = _to_mono(raw)
+                    if len(chunk) and not announced:
+                        # 只打一次：以后再遇到「录到的形状变了」，日志第一行就能看出来
+                        print(f"[asr] 录音块 shape={np.shape(raw)} → 单声道 {len(chunk)} 帧", flush=True)
+                        announced = True
                     if len(chunk):
+                        ACC["last_chunk_at"] = time.time()
                         ACC["buf"] = np.concatenate([ACC["buf"], chunk])
+                        # 原始环回 PCM 原样落盘：不受 KEEP_SEC 裁剪影响，事后可拿它
+                        # 和 mp3 做 A/B，分清「音频本身差」还是「实时管线处理差」。
+                        # 只 append 裸 s16le，不写 wav 头 —— 进程被强杀也不会损坏数据。
+                        rp = ACC["raw_path"]
+                        if rp:
+                            try:
+                                pcm = (np.clip(chunk, -1, 1) * 32767).astype(np.int16).tobytes()
+                                with open(rp, "ab") as f:
+                                    f.write(pcm)
+                            except Exception:
+                                pass
                     if time.time() >= nextCheck:
                         nextCheck = time.time() + 2.0
                         try:
@@ -157,12 +210,64 @@ def _capture_loop():
             time.sleep(2)
 
 
-def start_capture():
-    if ACC["thread"] is not None:
+def _break_capture_stream():
+    """把卡住的录音流打断，别让它一直占着设备。
+
+    WASAPI 环回有个坑：声音停太久，`rec.record()` 会一直等一个再也不来的事件，
+    线程就死在那一行 —— 不抛异常、`error` 是空的、`/health` 还报 capturing:true。
+    2026-11-22 实测：视频暂停一会儿，采集再也没恢复，整轮 0 字节、0 句。
+    """
+    rec = ACC.get("rec")
+    ACC["rec"] = None
+    if rec is None:
         return
+    try:
+        rec.__exit__(None, None, None)
+    except Exception:
+        pass
+
+
+def start_capture():
+    """确保采集线程活着。
+
+    **不能只看「有没有这个线程对象」**：线程死了以后对象还在，老写法
+    （`if ACC["thread"] is not None: return`）就永远不再启动 —— health 说在采、
+    实际一个字节没有。这是 2026-11-22 那一轮 0 数据的直接原因。
+    """
+    th = ACC["thread"]
+    if th is not None and th.is_alive():
+        return
+    if th is not None:
+        print("[asr] 采集线程已不在，重新拉起", flush=True)
+        ACC["stop"] = True
+        _break_capture_stream()
+        time.sleep(0.2)
     ACC["stop"] = False
+    ACC["last_chunk_at"] = time.time()  # 新线程给一段宽限，别一起步就被判卡住
     ACC["thread"] = threading.Thread(target=_capture_loop, daemon=True, name="capture")
     ACC["thread"].start()
+
+
+def _check_capture_health():
+    """每次拉取前体检一次：线程活着、但太久没有新音频块 = 流卡住了，重开。
+
+    为什么要这一层：线程卡在 `record()` 里时 `is_alive()` 仍然是 True，
+    光靠 start_capture() 判断不出来。判据必须是「最近有没有真的拿到音频」。
+    """
+    th = ACC["thread"]
+    if th is None or not th.is_alive():
+        start_capture()
+        return
+    age = time.time() - ACC["last_chunk_at"]
+    if age <= STALL_SEC:
+        return
+    print(f"[asr] 录音流 {age:.0f} 秒没有新音频，重开", flush=True)
+    _trace(event="reopen", gapSec=round(age, 1), total=round(len(ACC["buf"]) / RATE, 1))
+    ACC["stop"] = True
+    _break_capture_stream()
+    time.sleep(0.3)
+    ACC["thread"] = None
+    start_capture()
 
 
 def _norm(text):
@@ -171,11 +276,14 @@ def _norm(text):
 
 
 def _is_dup(key):
-    """模糊判重：ASR 对同一段音频每次会给出一字之差（是/式、夜戏/夜系）。"""
+    """模糊判重：ASR 对同一段音频每次会给出一字之差（是/式、夜戏/夜系）。
+
+    2026-11-21：删掉「子串包含即判重」。回放实测这条会误杀大量真实短句
+    （同参数下覆盖率 77.8% → 去掉后 83.7%），而「完全相同」+「相似度 ≥0.85」
+    两条已经足够挡住重叠采样带来的重复句。
+    """
     for prev in ACC["seen"]:
         if prev == key:
-            return True
-        if len(key) >= 4 and (key in prev or prev in key):
             return True
         if abs(len(prev) - len(key)) > max(3, int(len(key) * 0.3)):
             continue
@@ -218,6 +326,22 @@ def _looks_hallucinated(text):
     return False
 
 
+def _trace(**kw):
+    """每次 pull 落一行状态到 .scratch/run/pull-trace.jsonl。
+
+    为什么值得常开：断流这类问题事后无法从别处还原。有了 total / base / emitted
+    三个数，一眼就能分清是「根本没录进来」（total 不涨）、「游标不动」（emitted 卡住）
+    还是「转了但一条没交付」（n=0）。每 15 秒一行，一小时约 48KB。
+    """
+    try:
+        os.makedirs(RUN_DIR, exist_ok=True)
+        kw["t"] = round(time.time(), 1)
+        with open(os.path.join(RUN_DIR, "pull-trace.jsonl"), "a", encoding="utf-8") as f:
+            f.write(json.dumps(kw, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
 def _dump(text, t0, t1):
     """把交付的每一行落到 jsonl，供事后和字幕文件对照（绝对时间才有对照价值）。"""
     try:
@@ -228,6 +352,36 @@ def _dump(text, t0, t1):
         pass
 
 
+def _loudest_second(audio):
+    """这段音频里「最响的那一秒」的 rms。
+
+    为什么不整段平均：缓冲里堆着几十秒静音时，后面真有人说话，整段平均会被稀释到
+    阈值以下（823 秒缓冲夹 8 秒人声，平均只剩 0.057），于是永远判静音、永远早退。
+    按秒取最大，静音占比再高也稀释不掉。
+    """
+    a = np.asarray(audio, dtype=np.float32)
+    n = len(a) // RATE
+    if n <= 0:
+        return float(np.sqrt(np.mean(a ** 2))) if len(a) else 0.0
+    blocks = a[: n * RATE].reshape(n, RATE)
+    return float(np.sqrt(np.mean(blocks ** 2, axis=1)).max())
+
+
+def _trim_buffer():
+    """缓冲只留最近 KEEP_SEC 秒，并把 base 前移同样的量。
+
+    独立成函数，是因为**静音早退那条路也必须走它**。原先裁剪写在 pull() 结尾，
+    静音时提前 return 就绕过去了：缓冲实测堆到 823 秒（KEEP_SEC 本该 40 秒），
+    越堆越静、越静越判静音，不重启就永远好不了。
+    """
+    keep = int(KEEP_SEC * RATE)
+    buf = ACC["buf"]
+    if len(buf) > keep:
+        drop = len(buf) - keep
+        ACC["buf"] = buf[drop:]
+        ACC["base"] += drop / RATE
+
+
 def transcribe(audio):
     model = load()
     t0 = time.time()
@@ -236,7 +390,7 @@ def transcribe(audio):
         language="zh",
         vad_filter=True,
         vad_parameters={"min_silence_duration_ms": 400},
-        beam_size=1,
+        beam_size=BEAM_SIZE,
         condition_on_previous_text=False,
     )
     lines = []
@@ -260,6 +414,7 @@ def pull():
     前摇那 1.5 秒只为给模型上下文，落在这段里的句子不交付。
     """
     start_capture()
+    _check_capture_health()
     buf = ACC["buf"]
     base = ACC["base"]
     end_abs = base + len(buf) / RATE
@@ -279,9 +434,18 @@ def pull():
     if len(audio) < RATE * 1.0:
         return {"lines": [], "ms": 0, "silent": True, "rms": 0.0, "total": round(len(buf) / RATE, 2)}
 
-    rms = float(np.sqrt(np.mean(audio**2)))
-    if rms < 0.001:
-        return {"lines": [], "ms": 0, "silent": True, "rms": round(rms, 5), "total": round(len(buf) / RATE, 2)}
+    rms = _loudest_second(audio)
+    if rms < SILENT_RMS:
+        # 静音也**必须**先裁剪缓冲、推进游标再走 —— 见 _trim_buffer 的注释。
+        # 游标只在「确实空了一大段」时才推，短静音留着，免得把刚开头的话跳过。
+        if end_abs - ACC["emitted_until"] > GAP_SEC:
+            ACC["emitted_until"] = end_abs - MARGIN_SEC
+        _trim_buffer()
+        _trace(silent=True, n=0, segs=0, slice=round(len(audio) / RATE, 1),
+               total=round(len(ACC["buf"]) / RATE, 1), base=round(ACC["base"], 1),
+               emitted=round(ACC["emitted_until"], 1), rms=round(rms, 5))
+        return {"lines": [], "ms": 0, "silent": True, "rms": round(rms, 5),
+                "total": round(len(ACC["buf"]) / RATE, 2)}
 
     res = transcribe(audio)
     done = []
@@ -302,11 +466,17 @@ def pull():
             ACC["seen"] = ACC["seen"][-SEEN_MAX:]
         ACC["emitted_until"] = max(ACC["emitted_until"], t1)
 
-    # 只有"这一拍压根没有句子"时才推进游标。
-    # 若模型给了句子但都因"尾巴还没说完"被跳过，**绝不能推进** ——
+    # 只有"这一拍压根没有新句子"时才推进游标。
+    # 若模型给了句子、但都因"尾巴还没说完"被跳过，**绝不能推进** ——
     # 推进就等于把那句话永久丢掉（实测丢过"不可怕"这种真实台词）。
-    hadSegments = len(res["lines"]) > 0
-    if not done and not hadSegments and end_abs - ACC["emitted_until"] > 6.0:
+    #
+    # 但「有新句子」必须按**新内容**算，不能按「segs>0」算：模型经常返回一段完全
+    # 落在游标之前的残句（前摇那 1.5 秒重转出来的），它永远过不了 `t1 <= emitted_until`
+    # 这一关，却把推进也一起堵死了 —— 游标钉死、切片从 3 秒涨到 40 秒、每拍白转一遍。
+    # 2026-11-22 17:28 与 17:33 各实测一次（emitted 冻在 494.2 / 736.3）。
+    freshSegs = [s for s in res["lines"]
+                 if start_abs + float(s["t1"]) > ACC["emitted_until"]]
+    if not done and not freshSegs and end_abs - ACC["emitted_until"] > GAP_SEC:
         # 调试开关：把"没交付"的这段音频存下来。事后听一遍就能分清
         # 是"真没台词"、"被 VAD 滤掉"、还是"被跳过" —— 否则三者表现完全一样。
         if os.environ.get("WATCH_ALONG_DUMP_GAPS"):
@@ -326,11 +496,12 @@ def pull():
                 pass
         ACC["emitted_until"] = end_abs - MARGIN_SEC
 
-    # 裁剪缓冲：只前移 base（cursor 是绝对时间，不用动）
-    if len(buf) / RATE > KEEP_SEC:
-        drop = len(buf) / RATE - KEEP_SEC
-        ACC["buf"] = buf[int(drop * RATE):]
-        ACC["base"] += drop
+    # 裁剪缓冲：只前移 base（游标是绝对时间，不用动）
+    _trim_buffer()
+
+    _trace(silent=False, n=len(done), segs=len(res["lines"]), slice=round(len(audio) / RATE, 1),
+           total=round(len(ACC["buf"]) / RATE, 1), base=round(ACC["base"], 1),
+           emitted=round(ACC["emitted_until"], 1), rms=round(rms, 5))
 
     return {"lines": done, "ms": res["ms"], "silent": False, "rms": round(rms, 5),
             "total": round(len(ACC["buf"]) / RATE, 2)}
@@ -345,12 +516,36 @@ def reset(session=None):
     ACC["base"] = 0.0
     ACC["emitted_until"] = 0.0
     ACC["seen"] = []
-    ACC["error"] = None
+    # 这里**不要**清 error：采集线程死了/卡住时它是唯一线索。清掉之后 /health
+    # 显示一切正常，实际一字节没录到 —— 2026-11-22 正是这么被瞒过去的。
     try:
         if os.path.exists(DUMP):
             os.remove(DUMP)
     except Exception:
         pass
+
+    # 每轮一份原始录音。**默认关闭**：环回录的是整机声音，不显式打开就不落盘。
+    # 打开方式：启动本服务时设 WATCH_ALONG_DUMP_RAW=1；重启后 curl /health 看 rawDump 确认。
+    if os.environ.get("WATCH_ALONG_DUMP_RAW") == "1":
+        os.makedirs(RUN_DIR, exist_ok=True)
+        tag = safe if session else "default"
+        rp = os.path.join(RUN_DIR, f"raw-{tag}.s16le")
+        try:
+            open(rp, "wb").close()  # 新一轮从空文件开始
+            ACC["raw_path"] = rp
+            ACC["raw_started"] = time.time()
+            meta = {"session": tag, "rate": RATE, "channels": 1, "sample_width": 2,
+                    "encoding": "signed 16-bit little-endian PCM, no header",
+                    "started_epoch": ACC["raw_started"],
+                    "note": "numpy.fromfile(path, dtype=np.int16) / 32768 即可还原 float32"}
+            json.dump(meta, open(os.path.join(RUN_DIR, f"raw-{tag}.json"), "w",
+                                 encoding="utf-8"), ensure_ascii=False, indent=1)
+            print(f"[asr] 原始录音已开启：{rp}", flush=True)
+        except Exception as e:
+            ACC["raw_path"] = None
+            print(f"[asr] 原始录音开启失败：{e}", flush=True)
+    else:
+        ACC["raw_path"] = None
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -369,9 +564,16 @@ class Handler(BaseHTTPRequestHandler):
         self._send({
             "ok": True,
             "ready": MODEL is not None,
-            "capturing": ACC["thread"] is not None,
+            # capturing 必须是「线程活着」，不是「有个线程对象」——后者在线程死掉后依然为真
+            "capturing": ACC["thread"] is not None and ACC["thread"].is_alive(),
+            # 隔多久没拿到音频（秒）。静音时也会持续刷新，只有流卡死才会一直变大。
+            "lastAudioAge": (round(time.time() - ACC["last_chunk_at"], 1)
+                             if ACC["last_chunk_at"] else None),
             "device": ACC["device"],
             "error": ACC["error"],
+            # 重启后 curl 一下就能确认录音开关真的开起来了，别等跑完 5 分钟才发现没录到
+            "rawDump": ACC["raw_path"],
+            "rawStarted": ACC["raw_started"],
         })
 
     def do_POST(self):
