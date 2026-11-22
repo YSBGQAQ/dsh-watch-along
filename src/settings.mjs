@@ -58,7 +58,7 @@ export function validate(patch, current = DEFAULTS) {
         break
       case 'observeSec': {
         const n = Number(raw)
-        if (!Number.isInteger(n) || n < 0 || n > 120) reject(key, '必须是 0–120 的整数（秒；0 = 关闭静默观察）')
+        if (!Number.isInteger(n) || n < 0 || n > 120) reject(key, '必须是 0–120 的整数（秒；0 = 关闭，1 = 尽力而为的最高频）')
         else value.observeSec = n
         break
       }

@@ -302,6 +302,14 @@ export function apply(ctx, opts = {}) {
   let lastWokeSeq = 0
   let lastSheet = null // 最近一张拼图的编号，唤醒时交给模型看图
   let observeTimer = null // 静默观察轮的定时器（observeSec > 0 才有）
+  let observeInFlight = false // 上一条观察还没被接住
+  let observeSentAt = 0
+
+  /** 模型调了工具 = 它接住了上一条（观察轮也算）。 */
+  function noteToolCall() {
+    observeInFlight = false
+    watchLoop?.noteActivity()
+  }
   if (wakeEnabled) {
     waker = createWaker({
       enabled: true,
@@ -411,7 +419,20 @@ export function apply(ctx, opts = {}) {
       const obs = cur.observeSec ?? 0
       if (obs > 0) {
         observeTimer = setInterval(() => {
-          waker?.observe?.().catch?.((e) => both(`静默观察出错：${e?.message ?? e}`))
+          // **上一轮没接住就不再发**：DSH 的消息是排队的，一秒一条会把模型越推越远，
+          // 最后它一直在补旧账、看起来像卡死。
+          if (observeInFlight && Date.now() - observeSentAt < 90_000) return
+          if (observeInFlight) {
+            // 超过 90 秒还没任何工具调用：可能这一轮它没调工具就结束了，放过这一次
+            both('静默观察：上一轮 90 秒未接住，视为结束，继续下一轮')
+            observeInFlight = false
+          }
+          observeInFlight = true
+          observeSentAt = Date.now()
+          waker?.observe?.().catch?.((e) => {
+            observeInFlight = false
+            both(`静默观察出错：${e?.message ?? e}`)
+          })
         }, obs * 1000)
         try {
           observeTimer.unref?.()
@@ -495,7 +516,7 @@ export function apply(ctx, opts = {}) {
         ...tool,
         async execute(args, run) {
           try {
-            watchLoop?.noteActivity()
+            noteToolCall()
           } catch {
             /* 记账失败不影响工具本身 */
           }
