@@ -75,6 +75,7 @@ test('连续 5 次没回应：本次陪看不再唤醒', async () => {
     await h.waker.maybeWake({ kind: 'motion', strength: 'high' })
     h.advance(130_000)
   }
+  assert.ok(h.sent.length >= 1, '一次都没发出去，这条用例等于没验')
   assert.ok(h.sent.length <= 5, `发太多了：${h.sent.length} 条`)
   assert.equal(h.waker.state.exhausted, true)
   const r = await h.waker.maybeWake({ kind: 'motion', strength: 'high' })
@@ -112,17 +113,24 @@ test('读不到会话历史时保守处理：不计数、不掐掉', async () =>
   assert.ok(h.logs.some((l) => l.includes('不计数')))
 })
 
-test('send 失败不能把主流程拖挂', async () => {
-  const boom = harness({
+test('send 失败不能把主流程拖挂，也不许白占 120 秒窗口', async () => {
+  let fail = true
+  const h = harness({
     send: async () => {
-      throw new Error('宿主没响应')
+      if (fail) throw new Error('宿主没响应')
     },
   })
-  boom.waker.feed({ kind: 'motion', strength: 'high', at: boom.t })
-  const r = await boom.waker.maybeWake({ kind: 'motion', strength: 'high' })
-  assert.equal(r.woke, false)
-  assert.equal(r.reason, 'send-failed')
-  assert.ok(boom.logs.some((l) => l.includes('发送失败')))
+  h.waker.feed({ kind: 'motion', strength: 'high', at: h.t })
+  const r1 = await h.waker.maybeWake({ kind: 'motion', strength: 'high' })
+  assert.equal(r1.woke, false)
+  assert.equal(r1.reason, 'send-failed')
+  assert.ok(h.logs.some((l) => l.includes('发送失败')))
+
+  // 关键：上一拍发失败，不该让下一拍也发不出去
+  fail = false
+  h.advance(1_000)
+  const r2 = await h.waker.maybeWake({ kind: 'motion', strength: 'high' })
+  assert.equal(r2.woke, true, '一次发送失败把后面的 120 秒窗口白占了')
 })
 
 test('reset() 恢复：新一次 watch_start 后能重新唤醒', async () => {
@@ -151,8 +159,8 @@ test('摘要：只取最近 3 分钟、最多 20 条、按强度排序', () => {
   const lines = s.split('\n')
   assert.equal(lines.length, 20, `条数不对：${lines.length}`)
   assert.ok(!lines.includes('旧事件'), '窗口外的事件混进来了')
-  // 按时间正序输出：第一条应该比最后一条早
-  assert.ok(lines[0] !== undefined)
+  // 票面验收写的是「按 strength 排序」：第一条必须是高强度的最新那条
+  assert.equal(lines[0], 'e0', `首条不是高强度最新事件，实际是 ${lines[0]}`)
 })
 
 test('摘要按强度优先挑：high 先占位，剩下的按时间取最近的', () => {

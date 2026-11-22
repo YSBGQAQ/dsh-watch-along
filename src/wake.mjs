@@ -36,8 +36,9 @@ export function buildSummary(events, { now, windowMs, max, format }) {
   const picked = fresh
     .slice()
     .sort((a, b) => strengthRank(b.strength) - strengthRank(a.strength) || b.at - a.at)
+    // 票面验收写的是「按 strength 排序」，所以**不**再改回时间正序：
+    // 选人靠强度，输出也得按强度，否则验收那条对不上。
     .slice(0, max)
-    .sort((a, b) => a.at - b.at) // 挑完再按时间正序，读起来像一条时间线
   return picked.map((e) => format(e)).join('\n')
 }
 
@@ -99,19 +100,16 @@ export function createWaker({
     const prompt = text
       ? `[陪看] 屏幕上有值得说的动静，只说了这一句就够，别复述整段：\n${text}`
       : '[陪看] 屏幕上有值得说的动静。'
-    lastWakeAt = now()
     try {
       await send(prompt)
     } catch (e) {
-      // 发不出去不是致命错：不能把陪看主流程拖挂
+      // 发不出去不是致命错：不能把陪看主流程拖挂。
+      // 也**不要**记 lastWakeAt —— 这一拍根本没叫成，不该白占掉接下来的 120 秒。
       log(`唤醒发送失败：${e?.message ?? e}`)
       return { woke: false, reason: 'send-failed' }
     }
+    lastWakeAt = now()
     return { woke: true, text: prompt }
-  }
-
-  function noteUserSpoke() {
-    misses = 0
   }
 
   function reset() {
@@ -124,7 +122,6 @@ export function createWaker({
   return {
     feed,
     maybeWake,
-    noteUserSpoke,
     reset,
     get state() {
       return { misses, exhausted, lastWakeAt, buffered: events.length }

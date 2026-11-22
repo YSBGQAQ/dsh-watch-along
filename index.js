@@ -217,7 +217,10 @@ export function apply(ctx, opts = {}) {
       send: async (text) => {
         const sessionId = await targetSessionId()
         if (!sessionId) throw new Error('拿不到会话 id（ctx.sessionId 与 sessionController.list() 都没给）')
-        await sessionCtl.prompt({ sessionId, content: [{ type: 'text', text }] })
+        await sessionCtl.prompt(
+          { sessionId, content: [{ type: 'text', text }] },
+          new AbortController().signal,
+        )
       },
       // 读会话历史那一步的字段形状还没在真机确认（票 11「两个未验的事实」第 2 条）。
       // 传 null = waker 走保守分支：不计数，只保留主动唤醒、不自动停。
