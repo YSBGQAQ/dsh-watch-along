@@ -265,7 +265,7 @@ test('observe() 只说"别说话"，不带陪聊提示词', async () => {
   assert.match(sent[0], /一句话/, '要它用一句话总结')
   assert.match(sent[0], /代码块/, '要它写进代码块')
   assert.doesNotMatch(sent[0], /说两句/, '观察轮不该带陪聊指令，否则它又会开口')
-  assert.match(sent[0], /sheetId:"S1"/, '用户要求保留拼图编号')
+  assert.match(sent[0], /上述3秒图片：S1/, '用户要求的文案格式')
   assert.doesNotMatch(sent[0], /不要寒暄/, '这句已按用户要求删掉')
 })
 

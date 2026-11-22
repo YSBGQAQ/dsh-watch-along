@@ -85,6 +85,7 @@ export function createWaker({
   promptTemplate = DEFAULT_COMMENT_PROMPT, // 设置里的「陪聊提示词」
   gapSec = 30, // 用于把模板里的 {n} 换成实际秒数
   sheetId = () => null, // 最近一张拼图的编号（可能没有）
+  composeSec = 3, // 这张拼图覆盖多少秒（只用于文案）
   maxMisses = 5,
   summaryWindowMs = 180_000,
   summaryMax = 20,
@@ -123,7 +124,7 @@ export function createWaker({
     const prompt =
       `【观察】${new Date(now()).toTimeString().slice(0, 8)}，刚刚发生的变化：\n` +
       `${text || '（这一秒没有新变化）'}\n\n` +
-      (sid ? `这一段的多帧拼图：${sid}（要看就调 watch_frame({sheetId:"${sid}"})）\n` : '') +
+      (sid ? `上述${composeSec}秒图片：${sid}\n` : '') +
       '用一句话总结所有有用信息，直接输出到一个 ``` 代码块里。'
     try {
       await send(prompt)

@@ -327,6 +327,7 @@ export function apply(ctx, opts = {}) {
       minGapMs: 0,
       promptTemplate: cur.commentPrompt,
       sheetId: () => lastComposite ?? lastSheet,
+      composeSec: 3,
       gapSec: cur.wakeGapSec ?? 30,
       // send 失败只是这一拍没叫，不能影响陪看；waker 内部会捕获并记日志。
       // 投递走 agent.followup + sessions.flush（见 agent-delivery.mjs）。
