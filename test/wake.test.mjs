@@ -5,7 +5,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { createWaker, isTrigger, buildSummary, strengthRank } from '../src/wake.mjs'
+import { createWaker, isTrigger, buildSummary, strengthRank, wherePhrase } from '../src/wake.mjs'
 
 /** 可控时钟 + 记录发送。 */
 function harness(opts = {}) {
@@ -478,4 +478,35 @@ test('不传图时连"强制看图"也关掉：不给 mustSee、不催看', asyn
   const j = JSON.parse(sent[0])
   assert.equal(j.mustSee, undefined, '不传图就不该要求它看图')
   assert.equal(gateCalls, 0, '不传图时门闩也不该被问')
+})
+
+test('画面事件带上强度与方位（转写不许只剩"几格"）', async () => {
+  const sent = []
+  const w = createWaker({ enabled: true, minGapMs: 0, promptTemplate: 'r', send: async (t) => sent.push(t) })
+  w.feed({ kind: 'motion', strength: 'high', where: '50%,40%', cells: 36, at: Date.now() })
+  await w.maybeWake({ kind: 'motion', strength: 'high', at: Date.now() })
+  const ev = JSON.parse(sent[0]).events.at(-1)
+  assert.match(ev.motion, /大变化/)
+  assert.match(ev.motion, /中部/)
+  assert.match(ev.motion, /36格/)
+})
+
+test('方位词：九宫格换算', () => {
+  assert.equal(wherePhrase('50%,40%'), '中部')
+  assert.equal(wherePhrase('10%,10%'), '上左')
+  assert.equal(wherePhrase('90%,90%'), '下右')
+  assert.equal(wherePhrase('50%,10%'), '上部')
+  assert.equal(wherePhrase(null), '')
+  assert.equal(wherePhrase('乱码'), '')
+})
+
+test('说话那轮带上人话转写（buildSummary 的产物之前被丢了）', async () => {
+  const sent = []
+  const w = createWaker({ enabled: true, minGapMs: 0, promptTemplate: 'r', send: async (t) => sent.push(t) })
+  const now = Date.now()
+  w.feed({ kind: 'ocr', text: '那怪物该不会上来了吧', at: now })
+  await w.maybeWake({ kind: 'motion', strength: 'high', at: now })
+  const j = JSON.parse(sent[0])
+  assert.match(j.brief, /字幕：那怪物该不会上来了吧/, 'brief 没带上事件原文')
+  assert.ok(Array.isArray(j.events), '结构化事件仍要在（模型要拿 sheetId）')
 })

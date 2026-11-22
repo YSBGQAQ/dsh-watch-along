@@ -604,6 +604,22 @@ export function apply(ctx, opts = {}) {
           // 模型一轮要几秒，发得比它跑得快，只会越积越多 —— 这不是配置问题，是物理限制。
           const floor = Math.max(obs * 1000, Math.round(lastTurnMs * 1.2), 5000)
           if (since < floor) return
+          // 真实的背压：它还在跑上一轮，就别再往里塞。
+          // 以前靠"模型调没调工具"判断（noteToolCall），但图随消息走之后它常常一轮
+          // 一个工具都不调 —— 那个信号永远不来，节流退化成固定 5 秒，队列就一路涨
+          // （2026-11-23 实测：10 分钟积 6 条）。
+          const st = (() => {
+            try {
+              return String(lastAgent?.status ?? '')
+            } catch {
+              return ''
+            }
+          })()
+          if (st && st !== 'idle' && st !== 'ready') {
+            // 顺手把"这一轮到底跑了多久"记下来：下次的 floor 会跟着涨。
+            lastTurnMs = Math.max(since, 5000)
+            return
+          }
           if (observePending && since > 120_000) {
             both('静默观察：上一轮 120 秒无动静，视为已结束')
             observePending = false

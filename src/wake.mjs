@@ -70,6 +70,25 @@ export function renderPrompt(template, gapSec) {
  *
  * 没有时间戳，模型分不清"刚发生"还是"三分钟前"，评价就会把早就不在画面上的人当成主角。
  */
+/**
+ * 把事件里的 "50%,40%" 换成方位词。
+ *
+ * 为什么值这一步：模型读"中部/左上"能直接对上画面，读"50%,40%"还要自己换算，
+ * 而它每一轮只有一两秒。dsh-streamvision 的 eventize() 里的 where 也是这个用途。
+ */
+export function wherePhrase(where) {
+  const m = /^(\d{1,3})%,\s*(\d{1,3})%$/.exec(String(where ?? '').trim())
+  if (!m) return ''
+  const x = Number(m[1])
+  const y = Number(m[2])
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return ''
+  const v = y < 34 ? '上' : y > 66 ? '下' : ''
+  const h = x < 34 ? '左' : x > 66 ? '右' : ''
+  if (!v && !h) return '中部'
+  if (v && h) return `${v}${h}`
+  return v ? `${v}部` : `${h}部`
+}
+
 export function formatEvent(e) {
   const t = typeof e?.t === 'number' ? `${e.t.toFixed(1)}s` : ''
   const clock = typeof e?.at === 'number' ? new Date(e.at).toTimeString().slice(0, 8) : ''
@@ -134,11 +153,15 @@ export function createWaker({
     const key = { speech: 'say', ocr: 'sub', motion: 'motion' }[e.kind] ?? 'event'
     const item = {}
     item.at = typeof e.at === 'number' ? new Date(e.at).toTimeString().slice(0, 8) : null
-    // 画面事件常常没有 text（只有"变了多少"），空字符串模型读不懂。
-    // cells 是参与变化的格数，比一个字都没有有用。
     if (e.text != null) item[key] = String(e.text)
-    else if (key === 'motion') item[key] = e.cells ? `画面变化(${e.cells}格)` : '画面变化'
-    else item[key] = ''
+    else if (key === 'motion') {
+      // 光写"画面变化(36格)"模型读不出发生了什么。带上**强度**和**位置**：
+      // 这是 dsh-streamvision 的 eventize() 教的（strength + where + 与上一事件的关系），
+      // 我们之前只留了格数，等于把转写白写了。
+      const how = e.strength === 'high' ? '大变化' : e.strength === 'medium' ? '中等变化' : e.strength ? '轻微变化' : '变化'
+      const pos = wherePhrase(e.where)
+      item[key] = `画面${how}${pos ? `（${pos}）` : ''}${e.cells ? `·${e.cells}格` : ''}`
+    } else item[key] = ''
     if (e.sheetId) item.sheetId = e.sheetId
     return item
   }
@@ -330,6 +353,9 @@ export function createWaker({
       image: sid ?? null,
       // 强制看图：说话这一轮必须先把画面看一遍（所有轮次都要，见 observe 里的同一道闸）。
       ...(forceLook ? { mustSee: frameHint(sid) } : {}),
+      // 这段"人话转写"一直在算（`const text = buildSummary(...)`），但 2026-11-23 改成
+      // JSON payload 之后**被丢掉了** —— 用户一眼看出来"事件转写没用进去"。现在带上。
+      ...(text ? { brief: text } : {}),
       events: picked.map(packEvent),
       prompt: renderPrompt(promptTemplate, gapSec),
     }
