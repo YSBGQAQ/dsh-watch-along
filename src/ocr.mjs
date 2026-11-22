@@ -139,16 +139,19 @@ export function createSubtitleReader({
     // 而 GPU 轮只有 24.4% / 14.0%（服务被拖死，事件数骤减）。
     // every: 每 n 轮跑一次；只跑字幕带，mid 需要时把注释打开。
     // { top: 0.32, height: 0.4, label: 'mid', scale: 2, every: 4 },
-    { top: 0.66, height: 0.34, label: 'bottom', scale: 3, every: 1, batch: 1, once: true },
+    // scale 1（不放大）+ batch 3：2026-11-23 用真实帧实测，三帧竖拼 2.45 秒、三帧全读对；
+    // 而放大到 3 倍要 3.9 秒，还把"仨"读成"仁"—— 又慢又差，所以不放大。
+    { top: 0.66, height: 0.34, label: 'bottom', scale: 1, every: 1, batch: 3, once: true },
   ],
   // spec 要求 text ≤60 字。整幅识别会把多处文字拼成一句（实测 80–120 字），
   // 截断是"不猜位置"前提下唯一能守住的硬约束。
   maxChars = 60,
-  // 同时跑几路 OCR。2026-11-23 实测：单次 OCR 固定要 3 秒左右（跟图片大小几乎无关，
-  // 798 宽和 2394 宽都是 3–4 秒，是模型的固定开销），而字幕平均 2.6 秒换一条 ——
-  // 串行跑最多只能读一半。OCR 服务本身是线程化的：6 个并发 6.2 秒跑完（串行要 18 秒），
-  // 吞吐能到 3 倍，所以这里放 3 路。调 1 = 回到旧的"一次一个"。
-  maxInFlight = Number(process.env.WATCH_ALONG_OCR_INFLIGHT || 3),
+  // 同时跑几路 OCR。2026-11-23 实测：单次 OCR 固定要 3 秒左右（跟图片大小几乎无关），
+  // 而字幕平均 2.6 秒换一条 —— 单路串行最多只能读一半。
+  // 真正有效的办法是 batch（一次读多个时刻），并发只保留 2 路给"攒批次"和"识别"重叠用。
+  maxInFlight = Number(process.env.WATCH_ALONG_OCR_INFLIGHT || 2),
+  // 同一个带里，两帧至少隔这么久才允许拼进同一张（否则拼的是同一句字幕）
+  batchMs = Number(process.env.WATCH_ALONG_OCR_BATCH_MS || 800),
   now = Date.now,
   minChars = 2,
 } = {}) {
@@ -270,12 +273,15 @@ export function createSubtitleReader({
           const got = (await recognize(encode(img))) ?? []
           return { label, lines: got, batchN: 1, once: band.once }
         }
-        // 攒 batch 帧，竖拼成一张再送：一次调用的固定开销摊到多帧上
+        // 攒 batch 帧，竖拼成一张再送：一次调用的固定开销摊到多帧上。
+        // **必须隔一段时间收一帧**：连拍的 3 帧只隔 80 毫秒，拼起来是同一句字幕，白花 3 秒。
+        // batchMs=800 时，一张三拼图覆盖约 1.6 秒的三个时刻，等于把采样率乘 3。
         const arr = pendingBands.get(label) ?? []
-        arr.push(img)
+        const prev = arr[arr.length - 1]
+        if (!prev || at - prev.at >= batchMs) arr.push({ at, img })
         if (arr.length < batch) { pendingBands.set(label, arr); return { label, lines: [], batchN: 0, once: !!band.once } }
         pendingBands.set(label, [])
-        const stacked = stackVertical(arr)
+        const stacked = stackVertical(arr.map((x) => x.img))
         const got = (await recognize(encode(stacked))) ?? []
         return { label, lines: got, batchN: arr.length, once: !!band.once }
       })

@@ -74,6 +74,28 @@ test('OCR 报错时不抛，只回调错误，画面通道不受影响', async (
   assert.match(errs[0].error, /服务没起来/)
 })
 
+test('batch：只把相隔够久的帧拼在一起（连拍三帧是同一句，白花一次 OCR）', async () => {
+  let t = 0
+  const calls = []
+  const reader = createSubtitleReader({
+    bands: [{ top: 0, height: 1, label: 'bottom', batch: 3, scale: 1 }],
+    batchMs: 500,
+    encode: fakeEncode,
+    recognize: async (img) => { calls.push(img); return [] },
+    onEvent: () => {},
+    now: () => t,
+  })
+  await reader.feed(frame()) // 第 1 帧
+  t = 100
+  await reader.feed(frame()) // 离上一帧才 100ms，不该进批
+  t = 600
+  await reader.feed(frame()) // 第 2 帧
+  assert.equal(calls.length, 0, '才两帧就送去 OCR 了')
+  t = 1200
+  await reader.feed(frame()) // 第 3 帧 → 凑够三帧，触发一次
+  assert.equal(calls.length, 1, '三帧到齐却没触发')
+})
+
 test('最多同时跑 N 路 OCR，超过上限才跳过（2026-11-23 起：单路 3 秒追不上字幕）', async () => {
   let calls = 0
   const releases = []
