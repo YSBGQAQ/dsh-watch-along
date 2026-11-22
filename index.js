@@ -189,6 +189,13 @@ export function apply(ctx, opts = {}) {
   // ── 票 11：主动唤醒（默认关）──────────────────────────────────────────
   // 判定层在 src/wake.mjs（可全量单测），这里只负责"接到宿主的会话"。
   // 宿主能力拿不到就整条降级：只打一行日志，工具与三条通道照常。
+  // 主动唤醒这类的"启动体检"必须落到文件：宿主 logger 在 DSH 里不一定看得到，
+  // 而这几行是判断宿主能力有没有的唯一依据。走 log + trace 两处。
+  const both = (m) => {
+    log(m)
+    trace(m)
+  }
+
   const wakeEnabled = String(process.env.WATCH_ALONG_WAKE ?? '') === '1'
   const sessionCtl = (() => {
     try {
@@ -197,7 +204,7 @@ export function apply(ctx, opts = {}) {
       return null
     }
   })()
-  log(`主动唤醒：${wakeEnabled ? '开' : '关'}（WATCH_ALONG_WAKE=1 打开）；sessionController=${sessionCtl ? '有' : '无'}`)
+  both(`主动唤醒：${wakeEnabled ? '开' : '关'}（WATCH_ALONG_WAKE=1 打开）；sessionController=${sessionCtl ? '有' : '无'}`)
 
   async function targetSessionId() {
     if (ctx.sessionId) return ctx.sessionId // 插件若被按会话实例化，这里直接就有
@@ -212,7 +219,7 @@ export function apply(ctx, opts = {}) {
   if (wakeEnabled && sessionCtl) {
     waker = createWaker({
       enabled: true,
-      log,
+      log: both,
       // 发不出去只是这一拍没叫，不能影响陪看；waker 内部会捕获并记日志
       send: async (text) => {
         const sessionId = await targetSessionId()
