@@ -71,6 +71,25 @@ export function renderPrompt(template, gapSec) {
  *
  * 没有时间戳，模型分不清"刚发生"还是"三分钟前"，评价就会把早就不在画面上的人当成主角。
  */
+export function packEvent(e) {
+  // 英文键名：say=台词（听写）、sub=字幕（OCR）、motion=画面变化。
+  // 没有 cut：事件只有这三种 kind，切镜的信息本来就在 text 里（"切镜"）。
+  const key = { speech: 'say', ocr: 'sub', motion: 'motion' }[e.kind] ?? 'event'
+  const item = {}
+  item.at = typeof e.at === 'number' ? new Date(e.at).toTimeString().slice(0, 8) : null
+  if (e.text != null) item[key] = String(e.text)
+  else if (key === 'motion') {
+    // 光写"画面变化(36格)"模型读不出发生了什么。带上**强度**和**位置**：
+    // 这是 dsh-streamvision 的 eventize() 教的（strength + where + 与上一事件的关系），
+    // 我们之前只留了格数，等于把转写白写了。
+    const how = e.strength === 'high' ? '大变化' : e.strength === 'medium' ? '中等变化' : e.strength ? '轻微变化' : '变化'
+    const pos = wherePhrase(e.where)
+    item[key] = `画面${how}${pos ? `（${pos}）` : ''}${e.cells ? `·${e.cells}格` : ''}`
+  } else item[key] = ''
+  if (e.sheetId) item.sheetId = e.sheetId
+  return item
+}
+
 /**
  * 把事件里的 "50%,40%" 换成方位词。
  *
@@ -193,24 +212,7 @@ export function createWaker({
    * 少一个键、少一对引号，模型读到的还是一个自解释的键。
    * strength 也去掉了 —— 它只用于本地挑事件，写进消息对模型没有用处。
    */
-  function packEvent(e) {
-    // 英文键名：say=台词（听写）、sub=字幕（OCR）、motion=画面变化。
-    // 没有 cut：事件只有这三种 kind，切镜的信息本来就在 text 里（"切镜"）。
-    const key = { speech: 'say', ocr: 'sub', motion: 'motion' }[e.kind] ?? 'event'
-    const item = {}
-    item.at = typeof e.at === 'number' ? new Date(e.at).toTimeString().slice(0, 8) : null
-    if (e.text != null) item[key] = String(e.text)
-    else if (key === 'motion') {
-      // 光写"画面变化(36格)"模型读不出发生了什么。带上**强度**和**位置**：
-      // 这是 dsh-streamvision 的 eventize() 教的（strength + where + 与上一事件的关系），
-      // 我们之前只留了格数，等于把转写白写了。
-      const how = e.strength === 'high' ? '大变化' : e.strength === 'medium' ? '中等变化' : e.strength ? '轻微变化' : '变化'
-      const pos = wherePhrase(e.where)
-      item[key] = `画面${how}${pos ? `（${pos}）` : ''}${e.cells ? `·${e.cells}格` : ''}`
-    } else item[key] = ''
-    if (e.sheetId) item.sheetId = e.sheetId
-    return item
-  }
+
 
   // **限流放在这里，而不是调用方**。
   // 2026-11-23 的教训：index.js 里有两处会发消息（循环 + 事件旁路），
@@ -379,35 +381,15 @@ export function createWaker({
       }
     }
 
-    const text = buildSummary(events, { now: now(), windowMs: summaryWindowMs, max: summaryMax, format })
-    // 这条文案就是"陪聊"的全部指令 —— 模型看不到别的说明。
-    // 2026-11-22 之前的写法是「只说了这一句就够，别复述整段」，
-    // 结果它真的每帧碎碎念一句（三分钟七十多轮），和"影评人式陪聊"正好相反。
-    // 说话那条**必带提示词**（用户明确要求）：它是这一轮该说什么的唯一依据，
-    // 只放在秒级数据里会被淹没，只发一次又会被上下文挤掉。
-    // sid 已在函数开头算好（强制看图那条也要用）
-    const maxT = events.reduce((m, e) => (typeof e.t === 'number' && e.t > m ? e.t : m), 0)
-    // 选人看强度、输出按时间正序（见 buildSummary 的注释）
-    const picked = events
-      .filter((e) => e && typeof e.at === 'number' && now() - e.at <= summaryWindowMs)
-      .sort((a, b) => strengthRank(b.strength) - strengthRank(a.strength) || b.at - a.at)
-      .slice(0, summaryMax)
-      .sort((a, b) => a.at - b.at)
-    const payload = {
-      at: new Date(now()).toTimeString().slice(0, 8),
-      windowSec: gapSec,
-      image: sid ?? null,
-      // 强制看图：说话这一轮必须先把画面看一遍（所有轮次都要，见 observe 里的同一道闸）。
-      ...(forceLook ? { mustSee: frameHint(sid) } : {}),
-      // 这段"人话转写"一直在算（`const text = buildSummary(...)`），但 2026-11-23 改成
-      // JSON payload 之后**被丢掉了** —— 用户一眼看出来"事件转写没用进去"。现在带上。
-      ...(text ? { brief: text } : {}),
-      events: picked.map(packEvent),
-      prompt: renderPrompt(promptTemplate, gapSec),
-    }
-    const prompt = JSON.stringify(payload)
+    // ── 主动说话只发提示词（2026-11-23 用户要求）──────────────────────────
+    // 理由：每 6 秒一次的观察轮已经把画面和字幕写进上下文了，说话这轮再塞一遍
+    // JSON + 一张图，只会让它多花一两秒去读，读到的还是刚看过的内容。
+    // 所以这里**只发一句指令**，其余让它从上下文里取。
+    //
+    // 事件转写（buildSummary → brief）**不发了**，原因见文件末尾的说明块。
+    const prompt = renderPrompt(promptTemplate, gapSec)
     try {
-      await send(prompt)
+      await send(prompt, { withImage: false })
     } catch (e) {
       // 发不出去不是致命错：不能把陪看主流程拖挂。
       // 也**不要**记 lastWakeAt —— 这一拍根本没叫成，不该白占掉接下来的 120 秒。
@@ -447,3 +429,21 @@ export function createWaker({
     },
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 事件转写（buildSummary / formatEvent / worthTelling）：**暂不启用**
+//
+// 2026-11-23 试过，结论是不值得用，原因按重要性排：
+//
+// 1. **信息重复**：转写用的就是 events 里那些句子。两样一起发是同一份信息发两遍；
+//    只发转写又丢掉了 sheetId（取历史拼图要用）。
+// 2. **噪声不低**：实测一轮 10 分钟 423 条 OCR 里，10% 是两字碎片（"是啊"），
+//    10% 是误读（"LNPII MLIHL>"、"信温"）。清过一轮（worthTelling）只剩 88%，
+//    但剩下的水印（bilibili、up 主名）会每几秒重复一次，读起来还是脏。
+// 3. **收益说不清**：模型看 JSON 字段一样能读时间线，转写并没有让它说得更好 ——
+//    90 分钟那轮和 10 分钟那轮的口播质量没有肉眼可见差别。
+//
+// 保留代码是因为：`buildSummary` 的"按强度挑、按时间排"逻辑本身是对的，
+// 将来若真要给"给我讲讲刚才五分钟"这种问题用，可以拿它当基础。
+// 要重新启用，改这里的注释 + maybeWake 里那句 prompt，别只把 brief 加回去。
+// ─────────────────────────────────────────────────────────────────────────────

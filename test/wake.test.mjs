@@ -5,7 +5,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { createWaker, isTrigger, buildSummary, strengthRank, wherePhrase, worthTelling } from '../src/wake.mjs'
+import { createWaker, isTrigger, buildSummary, strengthRank, wherePhrase, worthTelling, packEvent } from '../src/wake.mjs'
 
 /** 可控时钟 + 记录发送。 */
 function harness(opts = {}) {
@@ -210,31 +210,30 @@ test('{n} 会被替换成实际秒数，且能换多次', () => {
   assert.equal(renderPrompt('', 30), DEFAULT_COMMENT_PROMPT.replace(/\{n\}/g, '30'), '空模板要回默认值')
 })
 
-test('唤醒消息带上拼图编号，并要求先看一眼再开口', async () => {
+test('主动说话只发提示词：不带图、不带事件、不带编号', async () => {
   const sent = []
+  const opts = []
   const w = createWaker({
     enabled: true,
     minGapMs: 0,
     gapSec: 30,
     promptTemplate: '你是搭子',
     sheetId: () => 'SHEET_123',
-    send: async (t) => sent.push(t),
-    format: (e) => `- ${e.text}`,
+    send: async (t, o) => { sent.push(t); opts.push(o) },
   })
+  w.feed({ kind: 'ocr', text: '别开窗', at: Date.now() - 1000 })
   await w.maybeWake({ kind: 'motion', strength: 'high', text: '切镜' })
   assert.equal(sent.length, 1)
-  const j = JSON.parse(sent[0])
-  assert.equal(j.image, 'SHEET_123', 'JSON 里没带拼图编号')
-  assert.equal(j.windowSec, 30, '说话那条的窗口应是 30 秒')
+  assert.equal(sent[0], '你是搭子', '只该是一句提示词')
+  assert.equal(opts[0].withImage, false, '说话那轮不该再附图（观察轮已经给过）')
+  assert.throws(() => JSON.parse(sent[0]), '不该再是 JSON 数据包')
 })
 
-test('没有拼图时不带 image 字段，但要求直接抓当前帧', async () => {
+test('没有拼图时也一样：只发提示词', async () => {
   const sent = []
   const w = createWaker({ enabled: true, minGapMs: 0, promptTemplate: '你是搭子', sheetId: () => null, send: async (t) => sent.push(t) })
   await w.maybeWake({ kind: 'motion', strength: 'high', text: '切镜' })
-  const j = JSON.parse(sent[0])
-  assert.equal(j.image, null, '没有拼图就不该编一个编号')
-  assert.match(j.mustSee, /不带参数/, '没有拼图时要让它直接抓当前帧')
+  assert.equal(sent[0], '你是搭子')
 })
 
 test('摘要按时间正序、每条标来源、带时刻', () => {
@@ -282,13 +281,10 @@ test('说话那条必带提示词（每 30 秒一次，不是每条都带）', a
     gapSec: 30,
     promptTemplate: '你是搭子，必须有自己思考',
     send: async (t) => sent.push(t),
-    format: (e) => `- ${e.text}`,
   })
   w.feed({ kind: 'ocr', text: '别开窗', t: 1, at: Date.now() - 1000 })
   await w.maybeWake({ kind: 'motion', strength: 'high', text: '切镜' })
-  const j = JSON.parse(sent[0])
-  assert.match(j.prompt, /必须有自己思考/, '说话那条没带提示词')
-  assert.ok(j.events.some((e) => e.sub === '别开窗'), '数据没带上')
+  assert.equal(sent[0], '你是搭子，必须有自己思考', '说话那条没带提示词')
 })
 
 test('introText 仍是那段规则原文（保留给"想单独发一次"的用法）', () => {
@@ -405,7 +401,8 @@ test('强制看图：上一轮没调 watch_frame 就不给新数据，只催它�
   h.advance(5000)
   const third = await h.waker.maybeWake({ ...ev, at: h.t })
   assert.equal(third.nudged, undefined)
-  assert.ok(JSON.parse(h.sent.at(-1)).events.length >= 1, '看过图之后应该恢复发数据')
+  assert.equal(typeof h.sent.at(-1), 'string', '看过图之后应该恢复发提示词')
+  assert.doesNotMatch(h.sent.at(-1), /mustSee/, '恢复后不该再是催看图那条')
 })
 
 test('强制看图：连续催满上限就放弃，别把陪看卡死', async () => {
@@ -420,7 +417,7 @@ test('强制看图：连续催满上限就放弃，别把陪看卡死', async ()
   h.advance(3000)
   const after = await h.waker.maybeWake({ ...ev, at: h.t }) // 达到上限，恢复发数据
   assert.equal(after.nudged, undefined)
-  assert.ok(JSON.parse(h.sent.at(-1)).events, '达到上限后应该恢复发数据')
+  assert.equal(typeof h.sent.at(-1), 'string', '达到上限后应该恢复发提示词')
   assert.ok(h.logs.some((m) => /催看图/.test(m)), '催看图要留日志')
 })
 
@@ -446,49 +443,40 @@ test('强制看图也管静默观察：没看图就不发观察数据，只催',
   assert.equal(third.nudged, undefined, '看过之后应该恢复')
 })
 
-test('图随消息附上时，不再要求调工具（省一次往返）', async () => {
-  const sent = []
+test('主动说话那轮永远不附图（观察轮已经给过画面）', async () => {
+  const calls = []
   const w = createWaker({
     enabled: true,
     minGapMs: 0,
     promptTemplate: '你是搭子',
-    sheetId: () => 'S9',
-    attachImages: true,
-    send: async (t) => sent.push(t),
+    send: async (t, o) => calls.push(o),
   })
   await w.maybeWake({ kind: 'motion', strength: 'high', text: '切镜' })
-  const j = JSON.parse(sent[0])
-  assert.match(j.mustSee, /图已附/, '应该告诉它图就在消息里')
-  assert.doesNotMatch(j.mustSee, /先调用 watch_frame/, '不该再逼它调工具')
+  assert.equal(calls[0].withImage, false)
 })
 
-test('不传图时连"强制看图"也关掉：不给 mustSee、不催看', async () => {
+test('不传图时门闩根本不被问', async () => {
   let gateCalls = 0
   const sent = []
   const w = createWaker({
     enabled: true,
     minGapMs: 0,
     promptTemplate: '你是搭子',
-    sheetId: () => 'S1',
     forceLook: false,
     frameGate: () => { gateCalls += 1; return false },
     send: async (t) => sent.push(t),
   })
   await w.maybeWake({ kind: 'motion', strength: 'high', text: '切镜' })
-  const j = JSON.parse(sent[0])
-  assert.equal(j.mustSee, undefined, '不传图就不该要求它看图')
-  assert.equal(gateCalls, 0, '不传图时门闩也不该被问')
+  assert.equal(gateCalls, 0, '不传图时门闩不该被问')
+  assert.equal(sent[0], '你是搭子')
 })
 
-test('画面事件带上强度与方位（转写不许只剩"几格"）', async () => {
-  const sent = []
-  const w = createWaker({ enabled: true, minGapMs: 0, promptTemplate: 'r', send: async (t) => sent.push(t) })
-  w.feed({ kind: 'motion', strength: 'high', where: '50%,40%', cells: 36, at: Date.now() })
-  await w.maybeWake({ kind: 'motion', strength: 'high', at: Date.now() })
-  const ev = JSON.parse(sent[0]).events.at(-1)
-  assert.match(ev.motion, /大变化/)
-  assert.match(ev.motion, /中部/)
-  assert.match(ev.motion, /36格/)
+test('画面事件转写带强度与方位（packEvent 直接测）', () => {
+  const ev = { kind: 'motion', strength: 'high', where: '50%,40%', cells: 36 }
+  const line = packEvent(ev).motion
+  assert.match(line, /大变化/)
+  assert.match(line, /中部/)
+  assert.match(line, /36格/)
 })
 
 test('方位词：九宫格换算', () => {
@@ -498,17 +486,6 @@ test('方位词：九宫格换算', () => {
   assert.equal(wherePhrase('50%,10%'), '上部')
   assert.equal(wherePhrase(null), '')
   assert.equal(wherePhrase('乱码'), '')
-})
-
-test('说话那轮带上人话转写（buildSummary 的产物之前被丢了）', async () => {
-  const sent = []
-  const w = createWaker({ enabled: true, minGapMs: 0, promptTemplate: 'r', send: async (t) => sent.push(t) })
-  const now = Date.now()
-  w.feed({ kind: 'ocr', text: '那怪物该不会上来了吧', at: now })
-  await w.maybeWake({ kind: 'motion', strength: 'high', at: now })
-  const j = JSON.parse(sent[0])
-  assert.match(j.brief, /字幕：那怪物该不会上来了吧/, 'brief 没带上事件原文')
-  assert.ok(Array.isArray(j.events), '结构化事件仍要在（模型要拿 sheetId）')
 })
 
 test('转写过滤：碎片、乱码、分辨率水印不进，画面事件永远进', () => {

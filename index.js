@@ -364,7 +364,8 @@ export function apply(ctx, opts = {}) {
   let observeTimer = null // 静默观察轮的定时器（observeSec > 0 才有）
   let observeSentAt = 0 // 上一条观察发出的时刻
   let observePending = false // 发出去还没等到"它动了"
-  let lastTurnMs = 0 // 上一轮从发出到它调用工具花了多久（用来算下一轮最早什么时候能发）
+  let lastTurnMs = 0 // 上一轮跑了多久（用来算下一轮最早什么时候能发）
+  let busySkips = 0 // 因为"它还在跑"而让路的次数（只用于日志取样）
 
   let lastSpeakAt = 0 // 上一次"允许说话"的投递时刻（兜底闸）
 
@@ -413,7 +414,7 @@ export function apply(ctx, opts = {}) {
       gapSec: cur.wakeGapSec ?? 30,
       // send 失败只是这一拍没叫，不能影响陪看；waker 内部会捕获并记日志。
       // 投递走 agent.followup + sessions.flush（见 agent-delivery.mjs）。
-      send: async (text) => {
+      send: async (text, opts = {}) => {
         if (!lastAgent) throw new Error('还没绑定会话：先调用一次 watch_start')
         // 收工之后还会有一两拍尾巴（队列里排着的事件）：这时连屏幕都不采了，
         // 附图必然失败，白白发一条"还没开始采集"的日志 + 一次模型调用。
@@ -423,10 +424,14 @@ export function apply(ctx, opts = {}) {
         } catch {
           /* 状态读不到就照常发 */
         }
+        // 主动说话那轮**不附图**（opts.withImage === false）：观察轮每 6 秒已经把画面
+        // 写进上下文了，说话这轮再塞一张只会让它多读一秒，读的还是刚看过的。
+        const wantImage = opts.withImage !== false
         // 把当前帧**直接附在这条消息里**：模型不用再花一次往返去调 watch_frame。
         // 实测（2026-11-23）：调工具那条路每轮 2 个 step、约 4 秒；附在消息里只要 1 个 step。
         let images = null
         try {
+          if (!wantImage) throw new Error('这一轮不附图')
           if (!canAttach) throw new Error('宿主没有 attachments 服务')
           const shot = await service.frame({ live: true, maxWidth: uploadW })
           const svc = attachmentsOf()
@@ -445,7 +450,8 @@ export function apply(ctx, opts = {}) {
             images = [att]
           }
         } catch (e) {
-          both(`唤醒附图失败，本条走纯文本：${e?.message ?? e}`)
+          // 主动说话那轮本来就不附图，不算失败，别刷日志
+          if (wantImage) both(`唤醒附图失败，本条走纯文本：${e?.message ?? e}`)
         }
         const r = deliverToAgent(lastAgent, text, { sessions: sessionsOf(ctx), images })
         if (!r.ok) throw new Error(`投递失败：${r.reason}`)
@@ -453,7 +459,8 @@ export function apply(ctx, opts = {}) {
         if (images && !r.imageFallback) lastFrameAt = Date.now()
         both(
           `唤醒投递 ${r.via}（flush=${r.flushed === null ? '没有 sessions 服务' : r.flushed}）` +
-            `${images ? '＋图' : ''}${r.imageFallback ? '（图被拒，已退回文本）' : ''}`,
+            `${images ? '＋图' : ''}${r.imageFallback ? '（图被拒，已退回文本）' : ''}` +
+            `｜status=${r.agentStatus ?? '?'}`, // 排队问题要靠这个值判断，别删
         )
       },
       // 读会话历史要 sessionController，而宿主没把它给插件（实测取不到）。
@@ -618,6 +625,8 @@ export function apply(ctx, opts = {}) {
           if (st && st !== 'idle' && st !== 'ready') {
             // 顺手把"这一轮到底跑了多久"记下来：下次的 floor 会跟着涨。
             lastTurnMs = Math.max(since, 5000)
+            busySkips += 1
+            if (busySkips % 10 === 1) both(`静默观察让路：上一轮还没结束（status=${st}，已等 ${Math.round(since / 1000)}s）`)
             return
           }
           if (observePending && since > 120_000) {
