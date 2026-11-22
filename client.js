@@ -50,6 +50,75 @@ window.__ModuleLoader__.load({
         props.children)
     }
 
+    // 两个 python 服务的状态与启动。
+    //
+    // 为什么走本机回环而不是宿主 RPC：这个面板跑在渲染进程里，拿不到主进程模块；
+    // 主进程那边起了一个只绑 127.0.0.1:8790 的小接口（src/service-supervisor.mjs）。
+    // 服务没起时插件**不会报错**，只是少两类事件 —— 所以这里必须显式提示"服务未启用"。
+    const PANEL_API = 'http://127.0.0.1:8790'
+
+    function Services() {
+      const [st, setSt] = React.useState(null)
+      const [busy, setBusy] = React.useState(false)
+      const [msg, setMsg] = React.useState('')
+
+      const load = () => {
+        fetch(PANEL_API + '/status')
+          .then((r) => r.json())
+          .then(setSt)
+          .catch(() => setSt({ error: '连不上面板接口（8790）。插件可能没启动。' }))
+      }
+      React.useEffect(() => {
+        load()
+        const t = setInterval(load, 5000)
+        return () => clearInterval(t)
+      }, [])
+
+      const startServices = () => {
+        setBusy(true)
+        setMsg('正在启动，模型加载约 10–30 秒…')
+        fetch(PANEL_API + '/start', { method: 'POST' })
+          .then((r) => r.json())
+          .then((r) => {
+            setMsg(r.ok ? (r.note || '已启动') : ('启动失败：' + (r.error || '未知原因')))
+            setTimeout(load, 1500)
+          })
+          .catch((e) => setMsg('启动失败：' + String(e && e.message ? e.message : e)))
+          .finally(() => setBusy(false))
+      }
+
+      if (!st) return h('div', { style: styles.card }, '读取服务状态…')
+      if (st.error) return h('div', { style: styles.card }, st.error)
+
+      const down = (st.services || []).filter((x) => !x.up)
+      return h('div', { style: styles.card },
+        (st.services || []).map((x) =>
+          h('div', { key: x.id, style: { display: 'flex', gap: 8, padding: '2px 0' } },
+            h('span', { style: { width: 18 } }, x.up ? '🟢' : '🔴'),
+            h('span', { style: { flex: '0 0 auto', width: 150 } }, x.name),
+            h('span', { style: { opacity: 0.6, flex: 1 } },
+              x.up ? ('端口 ' + x.port + (x.detail ? ' · ' + x.detail : '')) : ('未启动 · 端口 ' + x.port + (x.error ? ' · ' + x.error : ''))))),
+        down.length
+          ? h('div', { style: { marginTop: 8, color: '#c0392b', fontWeight: 600 } }, '服务未启用：' + down.map((x) => x.name).join('、'))
+          : h('div', { style: { marginTop: 8, opacity: 0.6 } }, '两个服务都在运行。'),
+        st.configured === false
+          ? h('div', { style: { marginTop: 6, fontSize: 12, opacity: 0.8 } },
+              '缺配置：' + (st.missing || []).join('；') + '（设好环境变量后重启 DSH）')
+          : null,
+        h('div', { style: { marginTop: 10 } },
+          h('button', {
+            type: 'button',
+            disabled: busy || st.configured === false || down.length === 0,
+            onClick: startServices,
+            style: {
+              padding: '5px 12px', borderRadius: 6, cursor: 'pointer', fontSize: 13,
+              border: '1px solid rgba(127,127,127,.35)', background: 'transparent', color: 'inherit',
+              opacity: busy || st.configured === false || down.length === 0 ? 0.45 : 1,
+            },
+          }, busy ? '启动中…' : (down.length ? '启动服务' : '都已在运行'))),
+        msg ? h('div', { style: { marginTop: 6, fontSize: 12, opacity: 0.75 } }, msg) : null)
+    }
+
     function Panel() {
       return h('div', { style: styles.wrap },
         h('div', { style: styles.title }, '陪看'),
@@ -62,6 +131,8 @@ window.__ModuleLoader__.load({
           h('div', { style: styles.card },
             FIELDS.map((f) => h(Row, { key: f.k, label: f.label },
               h('span', null, f.hint))))),
+        h(Section, { title: '服务' },
+          h(Services, null)),
         h(Section, { title: '现在能做什么' },
           h('div', { style: styles.card },
             h(Row, { label: '画面' }, h('span', null, 'watch_start / watch_frame / watch_events')),

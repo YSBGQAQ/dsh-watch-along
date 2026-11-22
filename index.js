@@ -14,6 +14,7 @@ import { createMobileServer } from './src/http.mjs'
 import { createWaker } from './src/wake.mjs'
 import { deliverToAgent } from './src/agent-delivery.mjs'
 import { createWatchLoop } from './src/watch-loop.mjs'
+import { createSupervisor } from './src/service-supervisor.mjs'
 import crypto from 'node:crypto'
 import { defineToolCompat } from './vendor/dsh-see-now-main/src/define-tool.js'
 import http from 'node:http'
@@ -340,6 +341,31 @@ export function apply(ctx, opts = {}) {
       lastWokeSeq = eventSeq
     },
   })
+
+  // 服务管家：设置面板靠它显示"服务未启用"、以及一键启动。
+  // 只绑 127.0.0.1，外部访问不到；面板在渲染进程里，只能走本机回环。
+  const supervisor = createSupervisor({ log: both, rootDir: HERE })
+  const panelServer = supervisor.serve()
+  disposers.push(() => {
+    try {
+      panelServer?.close?.()
+    } catch {
+      /* 已经关了 */
+    }
+  })
+  // apply 不是 async：用 then 链，别在这里 await（会卡住宿主启动）
+  supervisor
+    .status()
+    .then((st) => {
+      const down = st.services.filter((x) => !x.up).map((x) => x.name)
+      both(
+        down.length
+          ? `服务未启用：${down.join('、')} —— 设置页可以一键启动`
+          : `两个服务都在：${st.services.map((x) => x.name).join('、')}`,
+      )
+      if (!st.configured) both(`服务管家缺配置：${st.missing.join('；')}`)
+    })
+    .catch(() => {})
 
   const tools = createTools({
     service,
