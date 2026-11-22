@@ -41,6 +41,9 @@
 ## 两个未验的事实（动手前先验，各自一行）
 
 1. `ctx.get('sessionController')` 是否能拿到 —— 拿不到则整票降级为“不做”
+   - **2026-11-22 静态已确认存在**：宿主 `docs/capability-seams.md` 里 `ctx.sessionController` 是 `core` 服务，owner 包 `api-session-controller`，说明栏写着「Owns Session commands, cold reads, durable-event following, live control state, model catalogs, workspace opening, and Agent activation policy」。
+   - 塞消息的入口是 `@Remote('prompt') prompt(request, signal): Promise<SessionPromptValue>`，JSDoc 写的是「Admit one prompt after explicitly resuming its Session」，`request` 含**Session 身份、prompt 内容、来源元数据、投递方式**——正是本票要的「往开陪看的那个会话塞一条 user 消息」。
+   - 还差一步：插件 ctx 里 `ctx.get('sessionController')` 这一跳没在运行时验过（`prompt` 请求体的字段名要从 typert 生成的 schema 取，不是手写）。
 2. 能否读到会话里的 user 消息 —— 读不到则**保守处理**：不确定就不计数（5 次永远不会触发，等于只保留主动唤醒、不自动停）
 
 ## 遗留
