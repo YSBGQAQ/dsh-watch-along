@@ -120,7 +120,11 @@ export function createWaker({
     const key = { speech: 'say', ocr: 'sub', motion: 'motion' }[e.kind] ?? 'event'
     const item = {}
     item.at = typeof e.at === 'number' ? new Date(e.at).toTimeString().slice(0, 8) : null
-    item[key] = e.text != null ? String(e.text) : ''
+    // 画面事件常常没有 text（只有"变了多少"），空字符串模型读不懂。
+    // cells 是参与变化的格数，比一个字都没有有用。
+    if (e.text != null) item[key] = String(e.text)
+    else if (key === 'motion') item[key] = e.cells ? `画面变化(${e.cells}格)` : '画面变化'
+    else item[key] = ''
     if (e.sheetId) item.sheetId = e.sheetId
     return item
   }
@@ -150,7 +154,7 @@ export function createWaker({
       image: sid ?? null,
       ...(fresh.length > MAX_EVENTS ? { omitted: fresh.length - MAX_EVENTS } : {}),
       events: shown.map(packEvent),
-      prompt: '用一句话总结所有有用信息，直接输出到一个代码块里。',
+      prompt: '用简短的一句话总结有用信息，不要整段，一行即可，直接输出到一个代码块里。',
     }
     // **紧凑序列化**（不缩进）：缩进约占 25%，而模型不在乎好看。
     const prompt = JSON.stringify(payload)

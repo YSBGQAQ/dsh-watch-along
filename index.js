@@ -308,6 +308,8 @@ export function apply(ctx, opts = {}) {
   let observePending = false // 发出去还没等到"它动了"
   let lastTurnMs = 0 // 上一轮从发出到它调用工具花了多久（用来算下一轮最早什么时候能发）
 
+  let lastSpeakAt = 0 // 上一次"允许说话"的投递时刻（兜底闸）
+
   /** 模型调了工具 = 它接住了上一条（观察轮也算）。 */
   function noteToolCall() {
     // 记下这一轮实际跑了多久：观察轮的节流线要**跟着它走**。
@@ -358,10 +360,15 @@ export function apply(ctx, opts = {}) {
       everyMs: 2_000,
       hasNews: () => eventSeq > lastWokeSeq,
       wake: async () => {
-        // strength 给 high 是因为这一层不再按强度筛（"一直陪"要求有新画面就说），
-        // 强度只影响摘要里的排序与是否提前返回，见票 11 的决策表。
+        // strength 给 high 是因为这一层不再按强度筛（"一直陪"要求有新画面就说）。
         const r = await waker.maybeWake({ kind: 'tick', strength: 'high' })
-        if (r.woke) lastWokeSeq = eventSeq
+        if (r.woke) {
+          lastWokeSeq = eventSeq
+          lastSpeakAt = Date.now()
+          both(`主动唤醒已投递 → ${lastAgentSession}`)
+        } else if (r?.reason && r.reason !== 'disabled' && r.reason !== 'not-worth-it') {
+          both(`主动唤醒没发：${r.reason}`)
+        }
         return r
       },
       onStop: (why) => both(`陪看循环已停：${why}`),
@@ -390,14 +397,11 @@ export function apply(ctx, opts = {}) {
       if (payload?.sheetId) lastSheet = payload.sheetId
       eventSeq += 1
       waker.feed({ kind, ...payload })
-      // 语音事件说明有人在说话，但不等于"用户回应了我们"—— 这里不归零，交给历史判定
-      void waker.maybeWake({ kind, ...payload }).then((r) => {
-        // 成功也要留痕：不然"到底有没有叫醒"只能靠会话里有没有新消息来猜
-        if (r?.woke) both(`主动唤醒已投递：${String(r.text ?? '').length} 字 → ${lastAgentSession}`)
-        else if (r?.reason && r.reason !== 'disabled' && r.reason !== 'not-worth-it') {
-          both(`主动唤醒没发：${r.reason}`)
-        }
-      })
+      // **这里不再直接叫醒**。
+      // 原来每个事件都调一次 maybeWake，而采集是 8fps、motion 又密集 ——
+      // 相当于每秒叫好几次，和 watch-loop 的 30 秒间隔完全无关。
+      // 这就是"排队消息一直涨"的真因（用户实测 6 条积压、每秒一条）。
+      // 现在只喂事件，什么时候说话由 watch-loop 决定。
     },
     onWatchStop: () => {
       if (composeTimer) {
@@ -452,7 +456,9 @@ export function apply(ctx, opts = {}) {
           const since = observeSentAt ? Date.now() - observeSentAt : Infinity
           // 最早什么时候能发下一条：设置值 与 上一轮实测耗时×1.3 取大，且不低于 6 秒。
           // DSH 的消息是排队的，发得比模型跑得快，队列就会一直涨（实测 42 条）。
-          const floor = Math.max(obs * 1000, Math.round(lastTurnMs * 1.2), 1000)
+          // **地板不低于 5 秒**：1 秒一条的实测结果是队列一直涨（用户看到 6 条积压）。
+          // 模型一轮要几秒，发得比它跑得快，只会越积越多 —— 这不是配置问题，是物理限制。
+          const floor = Math.max(obs * 1000, Math.round(lastTurnMs * 1.2), 5000)
           if (since < floor) return
           if (observePending && since > 120_000) {
             both('静默观察：上一轮 120 秒无动静，视为已结束')
