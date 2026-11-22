@@ -143,8 +143,20 @@ window.__ModuleLoader__.load({
     }
 
     function apply(ctx) {
+      // 诊断：面板不出现时，先分清是"没找到设置入口"还是"客户端模块没加载/没拿到 slots"。
+      // 在 DSH 开发者工具的 Console 里搜 [watch-along] 就能看到。
+      try {
+        console.info('[watch-along] client apply；slots=', !!(ctx && ctx.slots && ctx.slots.inject))
+      } catch {
+        /* 控制台不可用就算了 */
+      }
       if (!ctx?.slots?.inject) {
         // 没有 slots 服务：面板不出现，但插件其余部分照常（工具在 index.js 里注册）
+        try {
+          console.warn('[watch-along] 拿不到 ctx.slots.inject，设置面板不会出现')
+        } catch {
+          /* 忽略 */
+        }
         return
       }
       ctx.slots.inject('settings.section', () =>
