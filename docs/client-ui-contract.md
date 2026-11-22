@@ -84,8 +84,8 @@ function apply(ctx) {
 | 区块 | 数据来源 | 交互 |
 |---|---|---|
 | 环境检查八项 | `runChecks(probes)` | 只读，绿/黄/红 + 原因 |
-| 常用 6 项 | `DEFAULTS` 渲染 | 改完走 `validate(patch)`，`rejected` 逐条显示在字段下 |
-| 场景预设 | `PRESETS` | 一次写入 fps/density/quality/speechPerMin |
+| 常用项 | `DEFAULTS` 渲染 | 改完走 `validate(patch)`，`rejected` 逐条显示在字段下 |
+| ~~场景预设~~ | ~~`PRESETS`~~ | **已取消**（2026-11-21 用户决定）：参数逐个暴露，不再做一键预设 |
 | 高级（折叠） | `region` / `maxWaitSec` | 同上 |
 
 **面板与主进程通信**：走 `ctx` 提供的 RPC（待确认具体方法名，basics-panel 里是直接 `inject: () => ({ ctx })` 后组件用 ctx 调宿主服务）。

@@ -38,7 +38,8 @@ window.__ModuleLoader__.load({
         props.children)
     }
 
-    // 常用设置（票 07）：六个可改项 + 场景预设。
+    // 常用设置（票 07）：逐项可改。**没有场景预设**（2026-11-21 用户决定删掉，
+    // settings.mjs 里也不再有 PRESETS）——别再往这里加"一键预设"。
     // 后端只有 /settings 两个动作，校验全在 src/settings.mjs 的 validate 里 ——
     // 非法值是 200 + rejected，界面负责把原因显示到对应输入框下面（票面明确要求）。
     const QUALITY_OPTS = ['low', 'medium', 'high']
