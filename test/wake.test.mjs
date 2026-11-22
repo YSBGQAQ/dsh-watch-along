@@ -223,8 +223,9 @@ test('唤醒消息带上拼图编号，并要求先看一眼再开口', async ()
   })
   await w.maybeWake({ kind: 'motion', strength: 'high', text: '切镜' })
   assert.equal(sent.length, 1)
-  assert.match(sent[0], /sheetId=SHEET_123/)
-  assert.match(sent[0], /先调 watch_frame/)
+  const j = JSON.parse(sent[0])
+  assert.equal(j.image, 'SHEET_123', 'JSON 里没带拼图编号')
+  assert.equal(j.type, 'comment')
 })
 
 test('没有拼图时不硬塞那句提示', async () => {
@@ -261,12 +262,13 @@ test('observe() 只说"别说话"，不带陪聊提示词', async () => {
   })
   await w.observe()
   assert.equal(sent.length, 1)
-  assert.match(sent[0], /【观察】/)
-  assert.match(sent[0], /一句话/, '要它用一句话总结')
-  assert.match(sent[0], /代码块/, '要它写进代码块')
-  assert.doesNotMatch(sent[0], /说两句/, '观察轮不该带陪聊指令，否则它又会开口')
-  assert.match(sent[0], /上述3秒图片：S1/, '用户要求的文案格式')
-  assert.doesNotMatch(sent[0], /不要寒暄/, '这句已按用户要求删掉')
+  const j = JSON.parse(sent[0])
+  assert.equal(j.type, 'observe')
+  assert.equal(j.image, 'S1', '没带拼图编号')
+  assert.equal(j.windowSec, 3)
+  assert.match(j.prompt, /一句话/)
+  assert.match(j.prompt, /代码块/)
+  assert.doesNotMatch(JSON.stringify(j), /说两句/, '观察轮不该带陪聊提示词')
 })
 
 // ── 提示词只发一次：之后只带数据，避免"每条都像这一帧的回复" ──────────
@@ -282,8 +284,9 @@ test('说话那条必带提示词（每 30 秒一次，不是每条都带）', a
   })
   w.feed({ kind: 'ocr', text: '别开窗', t: 1, at: Date.now() - 1000 })
   await w.maybeWake({ kind: 'motion', strength: 'high', text: '切镜' })
-  assert.match(sent[0], /必须有自己思考/, '说话那条没带提示词')
-  assert.match(sent[0], /别开窗/, '数据没带上')
+  const j = JSON.parse(sent[0])
+  assert.match(j.prompt, /必须有自己思考/, '说话那条没带提示词')
+  assert.ok(j.events.some((e) => e.text === '别开窗'), '数据没带上')
 })
 
 test('introText 仍是那段规则原文（保留给"想单独发一次"的用法）', () => {

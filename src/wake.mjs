@@ -107,12 +107,23 @@ export function createWaker({
    * 为什么要说"不要调用工具之外的任何东西"：模型不说的话，界面上就不会出现聊天气泡；
    * 一旦它写了一个字，那一条就会留在会话里，看起来像在刷屏。
    */
+  /** 一条事件压成 JSON 里的一项：只留模型用得上的字段。 */
+  function packEvent(e) {
+    const item = {
+      at: typeof e.at === 'number' ? new Date(e.at).toTimeString().slice(0, 8) : null,
+      t: typeof e.t === 'number' ? Math.round(e.t * 10) / 10 : null,
+      kind: e.kind ?? 'event',
+    }
+    if (e.text != null) item.text = String(e.text)
+    if (e.sheetId) item.sheetId = e.sheetId
+    if (e.strength) item.strength = e.strength
+    return item
+  }
+
   async function observe() {
-    // 只发**上次观察之后新来的**事件：秒级调用发整段摘要等于每秒重复一遍，
-    // 既浪费又让模型以为同一件事反复发生。
+    // 只发**上次观察之后新来的**事件：秒级调用发整段摘要等于每秒重复一遍。
     const floor = lastObserveAt || now() - 5000
     const fresh = events.filter((e) => e.at > floor)
-    const text = fresh.map(format).join('\n')
     lastObserveAt = now()
     const sid = (() => {
       try {
@@ -121,11 +132,19 @@ export function createWaker({
         return null
       }
     })()
-    const prompt =
-      `【观察】${new Date(now()).toTimeString().slice(0, 8)}，刚刚发生的变化：\n` +
-      `${text || '（这一秒没有新变化）'}\n\n` +
-      (sid ? `上述${composeSec}秒图片：${sid}\n` : '') +
-      '用一句话总结所有有用信息，直接输出到一个 ``` 代码块里。'
+    const maxT = events.reduce((m, e) => (typeof e.t === 'number' && e.t > m ? e.t : m), 0)
+    // **JSON 而不是散文**：模型读字段比读句子稳，prompt 也单独成字段，
+    // 不会被当成"对这一帧的感叹"。
+    const payload = {
+      type: 'observe',
+      at: new Date(now()).toTimeString().slice(0, 8),
+      elapsedSec: Math.round(maxT * 10) / 10,
+      windowSec: composeSec,
+      image: sid ?? null,
+      changes: fresh.length ? fresh.map(packEvent) : [{ note: `这 ${composeSec} 秒没有新变化` }],
+      prompt: '用一句话总结所有有用信息，直接输出到一个代码块里。',
+    }
+    const prompt = JSON.stringify(payload, null, 1)
     try {
       await send(prompt)
     } catch (e) {
@@ -178,9 +197,6 @@ export function createWaker({
     // 结果它真的每帧碎碎念一句（三分钟七十多轮），和"影评人式陪聊"正好相反。
     // 说话那条**必带提示词**（用户明确要求）：它是这一轮该说什么的唯一依据，
     // 只放在秒级数据里会被淹没，只发一次又会被上下文挤掉。
-    const head = renderPrompt(promptTemplate, gapSec)
-    // 带上拼图编号：光有文字，模型只能评价"发生了什么"；看了图才能谈镜头与表演。
-    // 这是 see-now 的 peek 模式（叫醒 → 先取图 → 再说）。
     const sid = (() => {
       try {
         return sheetId?.() ?? null
@@ -188,17 +204,23 @@ export function createWaker({
         return null
       }
     })()
-    const seeFirst = sid
-      ? `\n\n这一段有一张拼图（sheetId=${sid}）。**先调 watch_frame({sheetId:"${sid}"}) 看一眼画面**，再开口。`
-      : ''
-    // 时间感：绝对时钟 + 本次已进行多久。模型没有内部时钟，不写就只会说"刚才"。
-    const clockNow = new Date(now()).toTimeString().slice(0, 8)
     const maxT = events.reduce((m, e) => (typeof e.t === 'number' && e.t > m ? e.t : m), 0)
-    const elapsed = maxT ? `，本次陪看已进行 ${Math.floor(maxT / 60)} 分 ${Math.round(maxT % 60)} 秒` : ''
-    const when = `现在 ${clockNow}${elapsed}`
-    const prompt = text
-      ? `${head}\n\n${when}。过去 ${gapSec} 秒：\n${text}${seeFirst}`
-      : `${head}\n\n（过去 ${gapSec} 秒没有可复述的新内容，安静陪着就好，不用开口。）${seeFirst}`
+    // 选人看强度、输出按时间正序（见 buildSummary 的注释）
+    const picked = events
+      .filter((e) => e && typeof e.at === 'number' && now() - e.at <= summaryWindowMs)
+      .sort((a, b) => strengthRank(b.strength) - strengthRank(a.strength) || b.at - a.at)
+      .slice(0, summaryMax)
+      .sort((a, b) => a.at - b.at)
+    const payload = {
+      type: 'comment',
+      at: new Date(now()).toTimeString().slice(0, 8),
+      elapsedSec: Math.round(maxT * 10) / 10,
+      windowSec: gapSec,
+      image: sid ?? null,
+      events: picked.map(packEvent),
+      prompt: renderPrompt(promptTemplate, gapSec),
+    }
+    const prompt = JSON.stringify(payload, null, 1)
     try {
       await send(prompt)
     } catch (e) {
