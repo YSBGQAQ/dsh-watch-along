@@ -187,10 +187,11 @@ window.__ModuleLoader__.load({
         ))
     }
 
-    // 导出空 inject：宿主的判定是 `fiber.inject` 里每个服务都要 ctx.get() 拿得到，
-    // 拿不到就 pending（dsh-app-boot/src/index.ts:1093）。实测声明 5 个 → 5 个全 pending，
-    // 而跑得通的 dsh-jiuling 包声明就是 `inject: []`。服务大概率本来就在作用域里，
-    // 是我们把它标成硬依赖才卡住的。apply 里改成可选访问，拿不到就只少一个面板。
-    return { apply, inject: [] }
+    // **必须声明 slots**。cordis 不允许在未 inject 的情况下读 `ctx.slots`：
+    // 声明成 `inject: []` 会直接抛
+    //   `cannot get property "slots" without inject`
+    // 整个 entry 因此不激活（DevTools 里的 "1 entry did not activate"）。
+    // 参照 dsh-purge-community/client.js：`var inject = ["slots", "locale"]`（它还用 locale）。
+    return { apply, inject: ['slots'] }
   },
 })
