@@ -74,19 +74,21 @@ test('OCR 报错时不抛，只回调错误，画面通道不受影响', async (
   assert.match(errs[0].error, /服务没起来/)
 })
 
-test('上一次还在跑时，新帧被跳过（不排队堆积）', async () => {
+test('最多同时跑 N 路 OCR，超过上限才跳过（2026-11-23 起：单路 3 秒追不上字幕）', async () => {
   let calls = 0
-  let release
+  const releases = []
   const reader = createSubtitleReader({
     bands: [{ top: 0, height: 1, label: 'bottom' }],
+    maxInFlight: 2,
     encode: fakeEncode,
-    recognize: () => { calls += 1; return new Promise((r) => { release = r }) },
+    recognize: () => { calls += 1; return new Promise((r) => { releases.push(r) }) },
     onEvent: () => {},
     now: () => Date.now(),
   })
   const p1 = reader.feed(frame())
-  await reader.feed(frame()) // 应该被跳过
-  assert.equal(calls, 1)
-  release([])
-  await p1
+  const p2 = reader.feed(frame())
+  await reader.feed(frame()) // 第 3 个超过上限，应该被跳过
+  assert.equal(calls, 2, '上限是 2，却跑了 ' + calls + ' 路')
+  releases.forEach((r) => r([]))
+  await Promise.all([p1, p2])
 })

@@ -144,12 +144,17 @@ export function createSubtitleReader({
   // spec 要求 text ≤60 字。整幅识别会把多处文字拼成一句（实测 80–120 字），
   // 截断是"不猜位置"前提下唯一能守住的硬约束。
   maxChars = 60,
+  // 同时跑几路 OCR。2026-11-23 实测：单次 OCR 固定要 3 秒左右（跟图片大小几乎无关，
+  // 798 宽和 2394 宽都是 3–4 秒，是模型的固定开销），而字幕平均 2.6 秒换一条 ——
+  // 串行跑最多只能读一半。OCR 服务本身是线程化的：6 个并发 6.2 秒跑完（串行要 18 秒），
+  // 吞吐能到 3 倍，所以这里放 3 路。调 1 = 回到旧的"一次一个"。
+  maxInFlight = Number(process.env.WATCH_ALONG_OCR_INFLIGHT || 3),
   now = Date.now,
   minChars = 2,
 } = {}) {
   let pending = null // 尚未确认的上一行
   let emitted = null // 已经发出去的那一行：同一句不重复发
-  let busy = false
+  let inFlight = 0 // 正在跑的 OCR 路数（旧版是 busy 布尔：一次只许一个）
 
   // 只读埋点（2026-11-22）：统计 busy 丢帧 / 实际 OCR 耗时，每 10 拍落一条汇总。
   let feeds = 0
@@ -220,9 +225,11 @@ export function createSubtitleReader({
   const normKey = (t) => t.replace(/[^\p{L}\p{N}]/gu, '').toLowerCase()
 
   async function feed({ buf, width, height }) {
-    // 时间节流已移除：每帧都尝试，唯一挡住的是上一次 OCR 还没跑完（busy）。
-    if (busy) { busySkips += 1; return null }
-    busy = true
+    // 时间节流已移除：每帧都尝试，挡住的只有"在飞的路数已经到上限"。
+    // 为什么允许多路：单次 OCR 固定约 3 秒，字幕 2.6 秒换一条，串行必然漏一半；
+    // 服务是线程化的，3 路并发的总吞吐约是串行的 2–3 倍（2026-11-23 实测）。
+    if (inFlight >= maxInFlight) { busySkips += 1; return null }
+    inFlight += 1
     feeds += 1
     const feedStart = now()
     try {
@@ -346,13 +353,14 @@ export function createSubtitleReader({
       onEvent?.({ error: String(e?.message ?? e) })
       return null
     } finally {
-      busy = false
+      inFlight -= 1
       ocrMsTotal += now() - feedStart
       if (feeds % 10 === 0) {
         const q = frameQueue.get('bottom') ?? []
         const avg = Math.round(ocrMsTotal / feeds)
         // 复用 onDrop 的会话分文件；index.js 会把 text 截到 40 字，所以用紧凑串
-        onDrop?.('feed-stats', `f=${feeds} b=${busySkips} q=${q.length} a=${avg}ms`, 'feed')
+        // c= 同时在跑几路：调并发时用它确认真的并发起来了
+        onDrop?.('feed-stats', `f=${feeds} b=${busySkips} q=${q.length} a=${avg}ms c=${inFlight}`, 'feed')
       }
     }
   }
