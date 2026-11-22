@@ -262,9 +262,10 @@ test('observe() 只说"别说话"，不带陪聊提示词', async () => {
   await w.observe()
   assert.equal(sent.length, 1)
   assert.match(sent[0], /【观察】/)
-  assert.match(sent[0], /只输出一个空格/, '静默轮要让它输出空格，而不是"（本轮不出声）"这类说明')
+  assert.match(sent[0], /一句话/, '要它用一句话总结')
+  assert.match(sent[0], /代码块/, '要它写进代码块')
   assert.doesNotMatch(sent[0], /说两句/, '观察轮不该带陪聊指令，否则它又会开口')
-  assert.match(sent[0], /sheetId:"S1"/)
+  assert.doesNotMatch(sent[0], /sheetId/, '用户要求观察轮不带拼图编号')
 })
 
 // ── 提示词只发一次：之后只带数据，避免"每条都像这一帧的回复" ──────────
