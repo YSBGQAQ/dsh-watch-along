@@ -42,10 +42,32 @@ export function buildSummary(events, { now, windowMs, max, format }) {
   return picked.map((e) => format(e)).join('\n')
 }
 
+/**
+ * 陪聊风格的指令文案。
+ *
+ * 这里就是"提示词"的全部 —— 模型收到的是一条 user 消息，看不到别的说明，
+ * 所以角色、输出粒度、要不要调工具，都必须写在这几句里。
+ */
+export const STYLE_PROMPTS = Object.freeze({
+  critic:
+    '[陪看] 你是我一起看片的搭子，像个影评人那样聊。\n' +
+    '用 1–2 句话总结**刚才这一段**：发生了什么、有什么看点（铺垫/反转/镜头语言）。' +
+    '不要逐帧复述，也不要一句一条地碎碎念；不用调工具，除非我明确让你看细节。',
+  plot:
+    '[陪看] 你是我一起看片的搭子。\n' +
+    '用 1–2 句话把**刚才这一段**的剧情讲清楚：谁做了什么、推进到哪一步。' +
+    '不要逐帧复述；不用调工具。',
+  chat:
+    '[陪看] 你是我一起看片的搭子，像弹幕搭子那样聊。\n' +
+    '用 1–2 句话吐槽或捧场**刚才这一段**，语气随意。' +
+    '不要逐帧复述；不用调工具。',
+})
+
 export function createWaker({
   send, // async (text: string) => void —— 真正往会话塞消息的那一步
   now = Date.now,
   minGapMs = 120_000,
+  style = 'critic', // critic | plot | chat，见 STYLE_PROMPTS
   maxMisses = 5,
   summaryWindowMs = 180_000,
   summaryMax = 20,
@@ -97,9 +119,12 @@ export function createWaker({
     }
 
     const text = buildSummary(events, { now: now(), windowMs: summaryWindowMs, max: summaryMax, format })
+    // 这条文案就是"陪聊"的全部指令 —— 模型看不到别的说明。
+    // 2026-11-22 之前的写法是「只说了这一句就够，别复述整段」，
+    // 结果它真的每帧碎碎念一句（三分钟七十多轮），和"影评人式陪聊"正好相反。
     const prompt = text
-      ? `[陪看] 屏幕上有值得说的动静，只说了这一句就够，别复述整段：\n${text}`
-      : '[陪看] 屏幕上有值得说的动静。'
+      ? `${STYLE_PROMPTS[style] ?? STYLE_PROMPTS.critic}\n\n刚才这段时间屏幕上发生的：\n${text}`
+      : `${STYLE_PROMPTS[style] ?? STYLE_PROMPTS.critic}\n\n（这段时间没有可复述的新内容，安静陪着就好，不用开口。）`
     try {
       await send(prompt)
     } catch (e) {

@@ -77,3 +77,9 @@ test('speechPerMin 允许 0（= 不限制），31 拒', () => {
   assert.equal(validate({ speechPerMin: 31 }).ok, false)
   assert.equal(validate({ speechPerMin: 2.5 }).ok, false)
 })
+
+test('陪聊风格只认三档', () => {
+  assert.equal(validate({ commentStyle: 'plot' }).value.commentStyle, 'plot')
+  assert.equal(validate({}).value.commentStyle, 'critic')
+  assert.equal(validate({ commentStyle: 'roast' }).ok, false)
+})

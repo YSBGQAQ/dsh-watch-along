@@ -191,3 +191,19 @@ test('strength 的真实取值 high/medium/low 都要认对（medium 不许排�
   // 采集侧真实形状：切镜直接给 high
   assert.equal(isTrigger({ kind: 'motion', strength: 'high', where: '50%,50%' }), true)
 })
+
+// ── 陪聊文案：这次翻车就翻在这几句上 ──────────────────────────────
+import { STYLE_PROMPTS } from '../src/wake.mjs'
+
+test('唤醒文案要求"总结这一段"，不是"只说一句"', () => {
+  const p = STYLE_PROMPTS.critic
+  assert.match(p, /总结/)
+  assert.match(p, /1–2 句/)
+  assert.doesNotMatch(p, /只说了这一句就够/, '这句会把模型推成逐帧碎碎念')
+})
+
+test('三种风格文案互不相同，且都带"不要逐帧复述"', () => {
+  const all = Object.values(STYLE_PROMPTS)
+  assert.equal(new Set(all).size, 3)
+  for (const p of all) assert.match(p, /逐帧/)
+})
