@@ -107,6 +107,7 @@ export function createWaker({
   let misses = 0
   let exhausted = false
   let frameNudges = 0 // 连续催看图次数（看到图就归零）
+  let observeNudges = 0 // 静默观察那条的同一本账
 
   /**
    * 静默观察轮：叫醒它更新理解，但**明确要求不输出任何文字**。
@@ -141,6 +142,13 @@ export function createWaker({
   // 限流写在调用方时，只要漏掉一处就全废。放在唯一发送点才是真的闸。
   const MIN_OBSERVE_MS = 5000
 
+  /** 强制看图的那句硬要求：有拼图给编号，没有就让它直接抓当前帧。 */
+  function frameHint(sid) {
+    return sid
+      ? '先调用 watch_frame（sheetId 用 image 的值）看当前画面，再按 prompt 的要求回答。'
+      : '先调用 watch_frame（不带参数，抓当前帧）看画面，再按 prompt 的要求回答。'
+  }
+
   async function observe() {
     if (lastObserveAt && now() - lastObserveAt < MIN_OBSERVE_MS) {
       return { ok: false, reason: 'observe-too-soon' }
@@ -148,7 +156,6 @@ export function createWaker({
     // 只发**上次观察之后新来的**事件：秒级调用发整段摘要等于每秒重复一遍。
     const floor = lastObserveAt || now() - 5000
     const fresh = events.filter((e) => e.at > floor)
-    lastObserveAt = now() // 闸门与增量游标同一个值：这次发出去之后，下一拍才允许再发
     const sid = (() => {
       try {
         return sheetId?.() ?? null
@@ -156,6 +163,38 @@ export function createWaker({
         return null
       }
     })()
+
+    // ── 强制看图（**所有轮次**，2026-11-23 用户要求）────────────────────────
+    // 静默观察也要先看图：它才是最高频的那条（每 5 秒一次），不拦它等于没强制。
+    if (typeof frameGate === 'function' && lastObserveAt && observeNudges < maxFrameNudges) {
+      let looked = true
+      try {
+        looked = frameGate(lastObserveAt) !== false
+      } catch {
+        looked = true
+      }
+      if (!looked) {
+        observeNudges += 1
+        const nudge = JSON.stringify({
+          at: new Date(now()).toTimeString().slice(0, 8),
+          image: sid ?? null,
+          mustSee: frameHint(sid),
+          why: '上一轮没有看图，这一轮不给新数据（静默观察）',
+        })
+        lastObserveAt = now()
+        try {
+          await send(nudge)
+        } catch (e) {
+          log(`催看图（静默观察）发送失败：${e?.message ?? e}`)
+          return { ok: false, reason: 'send-failed' }
+        }
+        log(`催看图（静默观察，第 ${observeNudges} 次）`)
+        return { ok: true, nudged: true }
+      }
+      observeNudges = 0
+    }
+
+    lastObserveAt = now() // 闸门与增量游标同一个值：这次发出去之后，下一拍才允许再发
     const maxT = events.reduce((m, e) => (typeof e.t === 'number' && e.t > m ? e.t : m), 0)
     // **必须有上限**：万一模型落后很久，fresh 会把积压全带上，
     // 一条消息从几百字节涨到几万字节，反而拖慢它 —— 那才是恶性循环。
@@ -167,9 +206,10 @@ export function createWaker({
       at: new Date(now()).toTimeString().slice(0, 8),
       windowSec: composeSec,
       image: sid ?? null,
+      mustSee: frameHint(sid),
       ...(fresh.length > MAX_EVENTS ? { omitted: fresh.length - MAX_EVENTS } : {}),
       events: shown.map(packEvent),
-      prompt: '用简短的一句话总结有用信息，一行即可。**只输出这一个代码块，块外不要写任何文字。**',
+      prompt: '看这一帧，用简短的一句话总结有用信息，一行即可。**只输出这一个代码块，块外不要写任何文字。**',
     }
     // **紧凑序列化**（不缩进）：缩进约占 25%，而模型不在乎好看。
     const prompt = JSON.stringify(payload)
@@ -281,10 +321,8 @@ export function createWaker({
       at: new Date(now()).toTimeString().slice(0, 8),
       windowSec: gapSec,
       image: sid ?? null,
-      // 强制看图：说话这一轮必须先把画面看一遍。有拼图就给编号，没有就让它直接抓当前帧。
-      mustSee: sid
-        ? '回答前先调用 watch_frame（sheetId 用 image 的值）看这一帧，再说话。'
-        : '回答前先调用 watch_frame（不带参数，抓当前帧）看画面，再说话。',
+      // 强制看图：说话这一轮必须先把画面看一遍（所有轮次都要，见 observe 里的同一道闸）。
+      mustSee: frameHint(sid),
       events: picked.map(packEvent),
       prompt: renderPrompt(promptTemplate, gapSec),
     }
@@ -311,6 +349,8 @@ export function createWaker({
     introSent = false
     lastObserveAt = 0
     lastWakeAt = 0
+    frameNudges = 0
+    observeNudges = 0
     misses = 0
     exhausted = false
   }

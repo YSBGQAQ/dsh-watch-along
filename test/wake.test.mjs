@@ -423,3 +423,25 @@ test('强制看图：连续催满上限就放弃，别把陪看卡死', async ()
   assert.ok(JSON.parse(h.sent.at(-1)).events, '达到上限后应该恢复发数据')
   assert.ok(h.logs.some((m) => /催看图/.test(m)), '催看图要留日志')
 })
+
+test('强制看图也管静默观察：没看图就不发观察数据，只催', async () => {
+  let looked = true
+  const h = harness({ frameGate: () => looked, gapSec: 1 })
+  h.advance(10000)
+  const first = await h.waker.observe()
+  assert.equal(first.ok, true)
+  assert.ok(JSON.parse(h.sent.at(-1)).events.length >= 0)
+
+  looked = false
+  h.advance(6000)
+  const second = await h.waker.observe()
+  assert.equal(second.nudged, true, '静默观察没被拦')
+  const payload = JSON.parse(h.sent.at(-1))
+  assert.equal(payload.events, undefined, '催看图那条不许带事件数据')
+  assert.match(payload.mustSee, /watch_frame/)
+
+  looked = true
+  h.advance(6000)
+  const third = await h.waker.observe()
+  assert.equal(third.nudged, undefined, '看过之后应该恢复')
+})
