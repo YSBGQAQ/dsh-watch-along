@@ -13,6 +13,18 @@ import { execFileSync } from 'node:child_process'
 
 const MAX_RECORDS = 50
 
+/**
+ * 环境日志的默认位置：`<用户>\Documents\DSH\watch-along\startup.jsonl`。
+ *
+ * 为什么不放仓库里：这份日志是"这台机器当时是什么环境"，跟代码版本无关 ——
+ * 换分支、删仓库、重装插件都不该把它一起带走。放 Documents 下才能跨项目回看。
+ * 想换地方就设环境变量 WATCH_ALONG_LOG_DIR。
+ */
+export function defaultStartupLogFile(env = process.env) {
+  const dir = env?.WATCH_ALONG_LOG_DIR || path.join(os.homedir(), 'Documents', 'DSH', 'watch-along')
+  return path.join(dir, 'startup.jsonl')
+}
+
 /** 安全执行一条命令，拿不到就返回 null（环境探测不能因为某个命令缺失就崩）。 */
 function tryExec(cmd, args, timeoutMs = 4000) {
   try {

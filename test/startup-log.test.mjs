@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { appendStartupLog, readStartupLog, collectEnv } from '../src/startup-log.mjs'
+import { appendStartupLog, readStartupLog, collectEnv, defaultStartupLogFile } from '../src/startup-log.mjs'
 
 function tmpFile() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-startup-'))
@@ -43,6 +43,19 @@ test('文件里有坏行也不影响后续写入', () => {
   const back = readStartupLog(f)
   assert.equal(back.length, 2, '坏行应该被丢掉，好行保留')
   assert.equal(back[1].ok, 2)
+})
+
+test('默认落在 Documents\DSH\watch-along 下，不在仓库里', () => {
+  const p = defaultStartupLogFile({})
+  assert.equal(path.basename(p), 'startup.jsonl')
+  assert.ok(p.includes('Documents'), `没放到 Documents 下：${p}`)
+  assert.ok(!p.includes('.scratch'), `还写在仓库里：${p}`)
+  assert.ok(p.includes('watch-along'), `目录名不对：${p}`)
+})
+
+test('WATCH_ALONG_LOG_DIR 可以改位置', () => {
+  const p = defaultStartupLogFile({ WATCH_ALONG_LOG_DIR: path.join('D:', 'logs') })
+  assert.equal(p, path.join('D:', 'logs', 'startup.jsonl'))
 })
 
 test('collectEnv 给得出 CPU / 内存 / 系统这些关键项', () => {

@@ -16,7 +16,8 @@ import { deliverToAgent } from './src/agent-delivery.mjs'
 import { createWatchLoop } from './src/watch-loop.mjs'
 import { createSupervisor } from './src/service-supervisor.mjs'
 import { loadSettings } from './src/settings.mjs'
-import { collectEnv, appendStartupLog } from './src/startup-log.mjs'
+import { collectEnv, appendStartupLog, defaultStartupLogFile } from './src/startup-log.mjs'
+import { formatSummary } from './src/session-stats.mjs'
 import { createRateLimit } from './src/rate-limit.mjs'
 import crypto from 'node:crypto'
 import { defineToolCompat } from './vendor/dsh-see-now-main/src/define-tool.js'
@@ -142,7 +143,8 @@ export function apply(ctx, opts = {}) {
   // 环境日志是**按会话**记的，不是按进程：同一个 DSH 进程里开两个会话，
   // 就应该是两条记录（它们的模型、上下文、设置可能不同）。
   // 触发点是"这个会话第一次调我们的工具"——那时才拿得到 agent。
-  const startupLogFile = path.join(HERE, '.scratch', 'run', 'startup.jsonl')
+  // 位置在 Documents 下（见 defaultStartupLogFile 的注释），不跟仓库走。
+  const startupLogFile = defaultStartupLogFile()
   const sessionsLogged = new Set()
 
   function logSessionOnce(agent, toolName) {
@@ -341,6 +343,9 @@ export function apply(ctx, opts = {}) {
   let lastSheet = null // 最近一张拼图的编号，唤醒时交给模型看图
   let lastComposite = null // 最近一张"每 3 秒按时间拼出来的"多帧图
   let composeTimer = null
+  // 拼图成败只在这里能数到（service 不知道是插件在定时拼图），汇总时一并报出去。
+  let composeOk = 0
+  let composeFail = 0
   let observeTimer = null // 静默观察轮的定时器（observeSec > 0 才有）
   let observeSentAt = 0 // 上一条观察发出的时刻
   let observePending = false // 发出去还没等到"它动了"
@@ -410,7 +415,7 @@ export function apply(ctx, opts = {}) {
       },
       onStop: (why) => both(`陪看循环已停：${why}`),
     })
-    both('主动唤醒已开启；循环等 watch_start 再起（否则加载 3 分钟没人调工具就会自己收工）')
+    both('主动唤醒已开启；循环等 watch_start 再起（不再因空闲收工，只有 watch_stop 才停）')
   }
 
   const service = createWatchService({
@@ -440,7 +445,7 @@ export function apply(ctx, opts = {}) {
       // 这就是"排队消息一直涨"的真因（用户实测 6 条积压、每秒一条）。
       // 现在只喂事件，什么时候说话由 watch-loop 决定。
     },
-    onWatchStop: () => {
+    onWatchStop: (summary) => {
       if (composeTimer) {
         clearInterval(composeTimer)
         composeTimer = null
@@ -449,9 +454,17 @@ export function apply(ctx, opts = {}) {
         clearInterval(observeTimer)
         observeTimer = null
       }
+      // 一场陪看结束时打一行总账：多久、多少条事件（分三类）、id 有没有缺、内存涨没涨、拼图成没成。
+      // 这五项以前都不落盘，只能用 python 的旁证日志推 —— 票 09 的三个数就是这么丢的。
+      const composeText = `拼图 ${composeOk + composeFail} 张（成功 ${composeOk} / 失败 ${composeFail}）`
+      both(formatSummary(summary, composeText))
+      composeOk = 0
+      composeFail = 0
     },
     onWatchStart: () => {
       waker?.reset()
+      composeOk = 0
+      composeFail = 0
       // 懒取 sessionController：apply 时探是拿不到的（服务注册得比插件晚），
       // 所以改到真正要用的时候再取。有它才能自动开新会话（create / resolveAgent）。
       const sc = safe(() => ctx.get?.('sessionController'), null)
@@ -473,8 +486,12 @@ export function apply(ctx, opts = {}) {
       composeTimer = setInterval(() => {
         try {
           const c = service.composeSheet({ seconds: 3, cells: 6, width: viewSize.width, height: viewSize.height })
-          if (c?.sheetId) lastComposite = c.sheetId
+          if (c?.sheetId) {
+            lastComposite = c.sheetId
+            composeOk += 1
+          }
         } catch (e) {
+          composeFail += 1
           both(`拼图失败：${e?.message ?? e}`)
         }
       }, 3000)

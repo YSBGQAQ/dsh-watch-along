@@ -55,14 +55,35 @@ test('最小间隔：30 秒内不叫第二次', async () => {
   assert.equal(r.reason, 'too-soon')
 })
 
-test('一次只允许一条在飞：没接住就不再叫', async () => {
-  const h = harness()
-  await h.loop.tick() // 叫了，等模型接
-  h.advance(60_000)
-  const r = await h.loop.tick() // 模型一直没调工具
+test('一次只允许一条在飞：投递还没返回就不再叫（防重入）', async () => {
+  let release
+  const gate = new Promise((r) => {
+    release = r
+  })
+  const h = harness({
+    wake: async () => {
+      await gate
+      return { ok: true, via: 'followup' }
+    },
+  })
+  const first = h.loop.tick() // 投递卡住，还没返回
+  const r = await h.loop.tick() // 同一时刻又 tick 一次
   assert.equal(r.fired, false)
   assert.equal(r.reason, 'in-flight')
-  assert.equal(h.woke.length, 1, '没接住却又叫了一次 —— 会积一串消息')
+  release()
+  await first
+})
+
+test('模型只回话、不调工具，也不会把循环卡死', async () => {
+  // 2026-11-23 之前的判据要求"模型调过工具"才放行下一条，实测会死锁：
+  // 模型常常只回一句话，于是 inFlight 永远为真 —— 循环活着但一句话不说，
+  // 日志里连"收工"都没有，看起来像陪看突然哑了。
+  const h = harness()
+  await h.loop.tick()
+  h.advance(31_000) // 期间一次 noteActivity 都没有
+  const r = await h.loop.tick()
+  assert.equal(r.fired, true, '没调工具就卡在 in-flight —— 表现为陪看突然哑了')
+  assert.equal(h.woke.length, 2)
 })
 
 test('模型调了工具 = 接住了，可以继续叫', async () => {
@@ -76,13 +97,13 @@ test('模型调了工具 = 接住了，可以继续叫', async () => {
 })
 
 
-test('一直没有任何工具调用 → 3 分钟收工（用户睡着别吵）', async () => {
+test('没人理也不再收工（默认关闭，2026-11-23 起）', async () => {
   const h = harness()
-  h.advance(181_000)
+  h.advance(181_000) // 超过默认的 3 分钟
   const r = await h.loop.tick()
-  assert.equal(r.fired, false)
-  assert.equal(r.reason, 'idle')
-  assert.equal(h.loop.state.stopped, 'idle')
+  assert.equal(r.fired, true, '空闲超时不该再停循环')
+  assert.equal(h.loop.state.stopped, null)
+  assert.equal(h.woke.length, 1)
 })
 
 test('发送失败不算叫醒：不占间隔、不累计次数', async () => {

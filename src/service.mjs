@@ -4,6 +4,7 @@
 // 屏幕、窗口、时间、PNG 编码、pipeline 全是注入的 —— 所以测试不需要真屏幕，也不加载 koffi。
 import { createEventQueue } from './events.mjs'
 import { composeGrid, pickEvenly } from './compose-sheet.mjs'
+import { createSessionStats } from './session-stats.mjs'
 import { randomBytes } from 'node:crypto'
 
 const DEFAULT_SIZE = { width: 798, height: 450 }
@@ -74,6 +75,11 @@ export function createWatchService({
   if (typeof encode !== 'function') throw new Error('createWatchService 需要注入 encode（PNG 编码器）')
 
   const eventQueue = queue ?? createEventQueue({ now })
+  // 一次会话的流水账：结束时要能一句话说清"多久、多少条、有没有缺号、内存涨没涨"。
+  // 见 session-stats.mjs 顶部：上一轮 31 分钟实测就是缺了这份账，票 09 的三个数拿不出来。
+  const stats = createSessionStats({ now })
+  let lastSession = null
+  let rssTimer = null
   let capture = null
   let pipe = null
   let latest = null
@@ -103,12 +109,26 @@ export function createWatchService({
       fps: capture ? capture.params.fps : null,
       region: capture ? capture.params.region : null,
       size: capture ? { width: capture.params.width, height: capture.params.height } : null,
+      session: lastSession, // 最近一次会话的汇总（没跑过就是 null）
     }
   }
 
   async function stop() {
+    // 先把账结掉，再拆采集：frames / 事件数在 stop 之后会被清零。
+    let sessionSummary = null
     try {
-      onWatchStop?.()
+      stats.sample()
+      sessionSummary = stats.summary({ at: now(), frameCount: frames })
+      lastSession = sessionSummary
+    } catch {
+      /* 记账失败不能挡住停止 */
+    }
+    if (rssTimer) {
+      clearInterval(rssTimer)
+      rssTimer = null
+    }
+    try {
+      onWatchStop?.(sessionSummary)
     } catch {
       /* 通知失败不能挡住停止 */
     }
@@ -222,7 +242,7 @@ export function createWatchService({
             } catch {
               /* 观察者出错不能影响事件入队 */
             }
-            eventQueue.add('motion', motionEvent)
+            stats.onEvent(eventQueue.add('motion', motionEvent))
           }
         },
       })
@@ -237,6 +257,17 @@ export function createWatchService({
     startedAt = now()
     state = 'running'
     reason = null
+    // 新一轮会话：账本从零开始，并立刻采一次内存作为"首值"。
+    // 之后每 60 秒采一次，stop 时再采最后一次 —— 首末差值就是票 09 要的"涨没涨"。
+    stats.reset(startedAt)
+    stats.sample()
+    if (rssTimer) clearInterval(rssTimer)
+    rssTimer = setInterval(() => stats.sample(), 60_000)
+    try {
+      rssTimer.unref?.()
+    } catch {
+      /* 非 Node 定时器 */
+    }
     try {
       onWatchStart?.() // 新一轮陪看：主动唤醒的计数与缓冲要重置（票 11）
     } catch {
@@ -364,7 +395,9 @@ export function createWatchService({
     } catch {
       /* 观察者出错不能影响事件入队 */
     }
-    return eventQueue.add(kind, payload)
+    const event = eventQueue.add(kind, payload)
+    stats.onEvent(event)
+    return event
   }
 
   return { start, stop, frame, rawFrame, sheet, composeSheet, status, events, emit }

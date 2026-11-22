@@ -17,7 +17,7 @@ export const DEFAULTS = Object.freeze({
   // 唤醒节奏（对齐 see-now，但节奏用秒数直接填，比三档更好控制）
   wakeGapSec: 30,
   observeSec: 0, // 静默观察轮：每隔几秒叫醒它"只看不说"；0 = 关闭 // 两次主动说话的最小间隔（秒），0–300；**0 = 不说话，只采集**
-  idleStopMin: 3, // 多久没人调工具就收工（分钟）；0 = 不因空闲收工
+  idleStopMin: 0, // 多久没人调工具就收工（分钟）。默认 0 = 收工机制停用（2026-11-23 用户决定）
   // 陪聊提示词。{n} 会被替换成「主动说话间隔」的秒数。
   // 唯一来源在 src/wake.mjs：两份文案会漂，而模型只看到发出去的那一份
   commentPrompt: DEFAULT_COMMENT_PROMPT,

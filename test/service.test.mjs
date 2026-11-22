@@ -113,3 +113,42 @@ test('重复 start 不会起第二个采集', async () => {
   assert.equal(started.length, 1, '应该复用已有采集，而不是再起一个')
   await svc.stop()
 })
+
+test('停止时交出会话汇总：事件分三类、id 连续、RSS 有采样', async () => {
+  let stopped = null
+  const svc = createWatchService(base({ onWatchStop: (s) => (stopped = s) }))
+  await svc.start({ window: '直播' })
+  svc.emit('ocr', { text: '你好' })
+  svc.emit('speech', { text: '说话' })
+  const st = await svc.stop()
+
+  assert.ok(stopped, 'watch_stop 没把汇总交出来 —— 那一行 [会话汇总] 就打不出来')
+  assert.equal(stopped.events, 2)
+  assert.deepEqual(stopped.byKind, { ocr: 1, speech: 1 })
+  assert.equal(stopped.firstId, 1)
+  assert.equal(stopped.lastId, 2)
+  assert.equal(stopped.missing, 0)
+  assert.ok(stopped.durationSec >= 0)
+  assert.ok(stopped.rssMb.first > 0, 'RSS 没采到')
+  assert.deepEqual(st.session, stopped, 'status 里也应该能拿到最近一次汇总')
+})
+
+test('画面事件也要记进汇总（motion 不走 emit，最容易漏）', async () => {
+  let n = 0
+  const svc = createWatchService(
+    base({
+      createPipeline: () => ({
+        push: () => {},
+        drainChanges: () => (n++ === 0 ? [{ n: 12, peak: 0.01, cut: false }] : []),
+        take: () => null,
+        flushNow: () => {},
+      }),
+    }),
+  )
+  await svc.start({ window: '直播' })
+  await new Promise((r) => setTimeout(r, 40)) // 等假采集吐第一帧
+  const st = await svc.stop()
+
+  assert.equal(st.session.byKind.motion, 1, 'motion 没被记账')
+  assert.equal(st.session.events, 1)
+})
