@@ -170,7 +170,7 @@ export function createWatchService({
           // 变化摘要在「图被截走」和「图还在队列里等下一张」两种情况下都会产生。
           // 必须先读再 take()：没出图的那一帧攒下的摘要，会在下一次出图时被
           // take() + 后面的摘要一起挤掉，事件流就等于被本帧的 tick 节奏吃光（实测 30 秒 0 条）。
-          // 字幕通道自己节流（默认 1.5 秒一次），这里每帧都喂，由它决定跑不跑。
+          // 字幕通道不再做时间节流（2026-11-22 移除）；每帧都喂，由 busy 决定跑不跑。
           if (subtitle) {
             subtitle.feed({ buf, width: dim.width, height: dim.height }).catch(() => {})
           }

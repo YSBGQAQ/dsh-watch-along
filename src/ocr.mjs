@@ -118,7 +118,9 @@ export function createSubtitleReader({
   encode,
   onEvent,
   onDrop, // (reason, text, band) —— 丢弃要留痕，否则'为什么少了'永远查不出
-  intervalMs = 1500,
+  // 2026-11-22：移除时间节流（intervalMs）。它原是给已废弃的「两次一致」判定留时间间隔的，
+  // 现在一拍即发、CPU 单拍约 1.2s，节流恒不触发（埋点 t 一直为 0），留着只会误导。
+  // 节奏由 busy 标志自然决定：上一次 OCR 没跑完就跳过新帧，不会堆积。
   stableMs = 1200, // 同一行要隔这么久仍被认到才发（streamvision 的 STABLE_MS）
   threshold = 0.85,
   top = DEFAULT_TOP,
@@ -131,12 +133,13 @@ export function createSubtitleReader({
   // 默认只跑 mid + bottom：top 是浏览器标签/书签/地址栏，实测整屏噪音、
   // 而且每轮多花一次 OCR。需要"读页面顶部文字"时再显式打开 top。
   bands = [
-    // every: 每 n 轮跑一次。字幕是主角（每轮），正文可以低频（每 4 轮）——
-    // 一轮只调一次 OCR，周期才能压到 0.6s 左右，字幕期内才凑得齐两拍。
-    // 默认只跑字幕带：一次识别 ≈ 一次 OCR 的耗时，周期才压得下来。
-    // mid（正文）每 4 轮一次即可，需要时把注释打开。
+    // 2026-11-22 受控实验结论：CPU 版 + batch:1 跑 6 分钟不泄漏（显存峰值 4.1GB、
+    // OCR 内存峰值 649MB 且无线性增长），证明之前的泄漏是 GPU 显存池造成的，不是 batch:1。
+    // 严格按测试窗口核对：CPU batch3+700 = 76.1%，CPU batch1 = 72.2%，两者接近；
+    // 而 GPU 轮只有 24.4% / 14.0%（服务被拖死，事件数骤减）。
+    // every: 每 n 轮跑一次；只跑字幕带，mid 需要时把注释打开。
     // { top: 0.32, height: 0.4, label: 'mid', scale: 2, every: 4 },
-    { top: 0.66, height: 0.34, label: 'bottom', scale: 3, every: 1, batch: 3, once: true },
+    { top: 0.66, height: 0.34, label: 'bottom', scale: 3, every: 1, batch: 1, once: true },
   ],
   // spec 要求 text ≤60 字。整幅识别会把多处文字拼成一句（实测 80–120 字），
   // 截断是"不猜位置"前提下唯一能守住的硬约束。
@@ -144,10 +147,14 @@ export function createSubtitleReader({
   now = Date.now,
   minChars = 2,
 } = {}) {
-  let lastAt = -Infinity
   let pending = null // 尚未确认的上一行
   let emitted = null // 已经发出去的那一行：同一句不重复发
   let busy = false
+
+  // 只读埋点（2026-11-22）：统计 busy 丢帧 / 实际 OCR 耗时，每 10 拍落一条汇总。
+  let feeds = 0
+  let busySkips = 0
+  let ocrMsTotal = 0
 
   // 行级稳定判定（2026-11-21 改）。
   //
@@ -213,10 +220,11 @@ export function createSubtitleReader({
   const normKey = (t) => t.replace(/[^\p{L}\p{N}]/gu, '').toLowerCase()
 
   async function feed({ buf, width, height }) {
-    if (busy) return null
-    if (now() - lastAt < intervalMs) return null
-    lastAt = now()
+    // 时间节流已移除：每帧都尝试，唯一挡住的是上一次 OCR 还没跑完（busy）。
+    if (busy) { busySkips += 1; return null }
     busy = true
+    feeds += 1
+    const feedStart = now()
     try {
       const events = []
       const at = now()
@@ -284,9 +292,8 @@ export function createSubtitleReader({
           }
           let st = seen.get(key)
           if (!st) {
-            st = { hits: 0, firstAt: at - Math.max(0, batchN ?? 1) * intervalMs, firstSeenReal: at / 1000, emitted: false }
-            // 归并到已有 key 时，代表这一句在更早的拍里已经出现过
-            if (near) st.firstAt = at - intervalMs
+            // 不再按拍数回推时间（节流已删）；firstAt 只用于「两拍一致」与过期清理。
+            st = { hits: 0, firstAt: at, firstSeenReal: at / 1000, emitted: false }
           }
           st.hits += 1
           const pass = bandOnce
@@ -340,6 +347,13 @@ export function createSubtitleReader({
       return null
     } finally {
       busy = false
+      ocrMsTotal += now() - feedStart
+      if (feeds % 10 === 0) {
+        const q = frameQueue.get('bottom') ?? []
+        const avg = Math.round(ocrMsTotal / feeds)
+        // 复用 onDrop 的会话分文件；index.js 会把 text 截到 40 字，所以用紧凑串
+        onDrop?.('feed-stats', `f=${feeds} b=${busySkips} q=${q.length} a=${avg}ms`, 'feed')
+      }
     }
   }
 

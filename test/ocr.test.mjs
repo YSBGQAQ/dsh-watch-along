@@ -22,7 +22,6 @@ test('同一行要出现两次才收录，且只收录一次', async () => {
     encode: fakeEncode,
     recognize: async () => ['这波操作可以'],
     onEvent: (e) => got.push(e),
-    intervalMs: 0,
     stableMs: 500, // 测试用短稳定窗（生产默认 1200）
     now: () => (clock += 1000),
   })
@@ -49,7 +48,6 @@ test('文字变了就不发，等它稳定', async () => {
     encode: fakeEncode,
     recognize: async () => texts[Math.min(i++, texts.length - 1)],
     onEvent: (e) => got.push(e),
-    intervalMs: 0,
     stableMs: 500, // 测试用短稳定窗（生产默认 1200）
     now: () => (clock += 1000),
   })
@@ -69,7 +67,6 @@ test('OCR 报错时不抛，只回调错误，画面通道不受影响', async (
     encode: fakeEncode,
     recognize: async () => { throw new Error('服务没起来') },
     onEvent: (e) => errs.push(e),
-    intervalMs: 0,
     now: () => Date.now(),
   })
   await reader.feed(frame())
@@ -85,7 +82,6 @@ test('上一次还在跑时，新帧被跳过（不排队堆积）', async () =>
     encode: fakeEncode,
     recognize: () => { calls += 1; return new Promise((r) => { release = r }) },
     onEvent: () => {},
-    intervalMs: 0,
     now: () => Date.now(),
   })
   const p1 = reader.feed(frame())

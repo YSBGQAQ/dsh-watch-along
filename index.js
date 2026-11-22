@@ -133,7 +133,8 @@ export function apply(ctx, opts = {}) {
   const subtitle = createSubtitleReader({
     encode,
     recognize,
-    intervalMs: 700, // 字幕只活 1.5–2 秒：一轮必须 ≪ 它，否则凑不齐两次一致（实测只出水印）
+    // 2026-11-22：时间节流已移除。它原本给已废弃的「两次一致」判定留时间间隔，
+    // CPU 单拍约 1.2s 时恒不触发（埋点 t 一直为 0）；节奏由 busy 自然决定。
     onEvent: (e) => {
       if (e?.error) return log(`字幕通道：${e.error}`)
       svcRef?.emit('ocr', e)

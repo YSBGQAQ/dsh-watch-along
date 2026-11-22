@@ -46,6 +46,8 @@ if exist "%PY%" (
 
 REM --- 2. packages (offline) ---
 echo [2/4] installing packages from wheels ...
+REM OCR 走 CPU 版 onnxruntime（GPU 版在常驻服务里显存泄漏，已回退）；
+REM 下面三个 nvidia wheel 只给 faster-whisper 的 GPU 转写用。
 "%PY%" -m pip install --no-index --find-links="%WATCH_ALONG_WHEELS%" ^
   rapidocr onnxruntime faster-whisper soundcard numpy pillow ^
   nvidia-cublas-cu12 nvidia-cudnn-cu12 nvidia-cuda-nvrtc-cu12

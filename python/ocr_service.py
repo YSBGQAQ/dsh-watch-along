@@ -4,8 +4,17 @@
   python ocr_service.py --once <图片路径>      # 单次，验证用
   python ocr_service.py --port 8765            # 常驻，POST {"path": "..."} 返回 {"lines":[...]}
 
-为什么必须常驻：rapidocr 加载模型要 1–3 秒，而一帧字幕的推理只要几十毫秒；
-如果每次调用都起进程，字幕通道的时间全花在加载上（ADR 0002）。
+为什么必须常驻：rapidocr 加载模型要 1–3 秒，而一帧字幕的推理只要几十毫秒到
+一秒；如果每次调用都起进程，字幕通道的时间全花在加载上（ADR 0002）。
+
+## 2026-11-22 回退 CPU
+
+GPU 版（onnxruntime-gpu 1.26 + CUDA）在常驻服务里出现显存/内存线性泄漏：
+开测约 20 秒显存打满 16GB、OCR 进程内存涨到 17.9GB，最后连 cuBLAS 句柄都建不起来。
+已卸载 `onnxruntime-gpu`、离线装回 CPU 版 `onnxruntime 1.32.0`。
+CPU 版两轮 5 分钟实测 OCR 79.2% / 76.1%，全程不卡，是这个场景的稳定基线。
+
+**别只看 /health**：它只说明模型加载了，不代表推理能跑。要确认就 POST 一张图。
 """
 import json
 import sys
@@ -14,15 +23,22 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from rapidocr import RapidOCR
 
+ENGINE = None
+DEVICE = "cpu"
+
 
 def load():
     t0 = time.time()
     engine = RapidOCR()
-    print(f"[ocr] 模型加载完成 {time.time() - t0:.1f}s", flush=True)
+    # rapidocr 延迟加载模型：先跑一张空图把 det/cls/rec 建起来，
+    # 别让第一帧字幕独自承担 1–3 秒的加载。
+    try:
+        import numpy as np
+        engine(np.zeros((720, 2532, 3), dtype=np.uint8))
+    except Exception as e:
+        print(f"[ocr] 预热跳过（不影响启动）：{type(e).__name__}: {e}", flush=True)
+    print(f"[ocr] 模型加载完成 {time.time() - t0:.1f}s device=cpu", flush=True)
     return engine
-
-
-ENGINE = None
 
 
 def run_one(path):
@@ -57,7 +73,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path.startswith("/health"):
-            self._send({"ok": True, "ready": ENGINE is not None})
+            self._send({"ok": True, "ready": ENGINE is not None, "device": DEVICE})
         else:
             self._send({"ok": False, "error": "not found"}, 404)
 
