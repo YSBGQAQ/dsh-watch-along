@@ -74,6 +74,7 @@ ACC = {
     "raw_started": None,  # 本轮录音开始的墙上时间（epoch 秒）
     "last_chunk_at": 0.0,  # 最近一次拿到音频块的时刻；体检用，判断流是不是卡死了
     "rec": None,  # 当前打开的录音器；卡死时要靠它把流打断
+    "source_note": None,  # 请求的来源用不上时的原因（回了整机）。给 /health 看，不许只在 stdout
 }
 
 
@@ -153,7 +154,11 @@ def _resolve_audio_source(spec):
         return ("system", f"audioSource 配置看不懂（{e}）")
     if kind == "system":
         return ("system", None)
-    pid = procloopback.resolve_pid(target)
+    try:
+        pid = procloopback.resolve_pid(target)
+    except Exception as e:
+        # 连进程表都读不到（权限/系统调用失败）时也得降级 + 留原因，不能把采集线程带走
+        return ("system", f"解析 audioSource 出错（{type(e).__name__}: {e}）")
     if pid is None:
         return ("system", f"找不到进程 {target}")
     return ("process", pid)
@@ -183,10 +188,16 @@ def _capture_process(pid):
     name = procloopback.pid_name(pid) or "?"
     ACC["device"] = f"进程 {name}({pid})"
     with procloopback.ProcessLoopback(pid, rate=RATE) as cap:
+        # 挂到 ACC["rec"] 上，看门狗才打得断它（否则 _break_capture_stream 对这路是空操作，
+        # 重开时旧线程还在 read() 里，两路会同时往缓冲里塞）
+        ACC["rec"] = cap
         print(f"[asr] 开始按进程录音：{name} (pid={pid})", flush=True)
-        while not ACC["stop"]:
-            for block in cap.read(0.5):
-                _ingest(block)
+        try:
+            while not ACC["stop"]:
+                for block in cap.read(0.5):
+                    _ingest(block)
+        finally:
+            ACC["rec"] = None
 
 
 def _capture_device():
@@ -257,10 +268,15 @@ def _capture_loop():
             _capture_process(payload)
             return  # 正常退出（ACC["stop"] 被置真）
         except Exception as e:
-            print(f"[asr] 进程回环中断（{type(e).__name__}: {e}），回退整机混音", flush=True)
+            note = f"进程回环中断（{type(e).__name__}: {e}），已回退整机混音"
+            ACC["source_note"] = note
+            print(f"[asr] {note}", flush=True)
     elif payload:
         # 配置看不懂 / 找不到进程：明确说一句再回退，不静默
+        ACC["source_note"] = payload
         print(f"[asr] {payload}，回退整机混音", flush=True)
+    else:
+        ACC["source_note"] = None
     _capture_device()
 
 
@@ -624,6 +640,9 @@ class Handler(BaseHTTPRequestHandler):
             "lastAudioAge": (round(time.time() - ACC["last_chunk_at"], 1)
                              if ACC["last_chunk_at"] else None),
             "device": ACC["device"],
+            # 请求的来源用不上时会写明原因（例如"找不到进程 xxx，回退整机混音"）。
+            # 降级允许，静默不让 —— GLOSSARY「降级」。
+            "audioNote": ACC["source_note"],
             "error": ACC["error"],
             # 重启后 curl 一下就能确认录音开关真的开起来了，别等跑完 5 分钟才发现没录到
             "rawDump": ACC["raw_path"],

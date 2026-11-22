@@ -5,7 +5,7 @@
 
 **Blocked by:** 12（先证明现有采集可用，再换）
 
-**Status:** done（采集已实现并真机验通链路；「只录该进程、不含提示音」这一条仍需一轮人耳对照）
+**Status:** claimed（采集已实现、真机验通链路；「只录该进程、不含提示音」与「杀进程回退」两条验收仍待人耳对照）
 
 参考：`vendor/dsh-see-now-main/examples/floating-chat/procloopback.py`（纯 ctypes，无新依赖）
 
@@ -52,3 +52,25 @@ set WATCH_ALONG_AUDIO_SOURCE=process:ego
 ```
 
 已在 `settings.mjs` 的注释里写明这条，别让人以为改设置就有用。
+
+### 2026-11-22 按 code-review 修（两条会直接打坏回退路径）
+
+1. **COM 引用计数不配对** —— `_capture_loop` 线程开头已经 `CoInitialize`（STA），
+   而移植过来的 `_activate_process_loopback` 里又 `CoInitializeEx(…, MTA)`，在已初始化的
+   线程上返回 `RPC_E_CHANGED_MODE` 且**不加计数**；`close()` 却无条件 `CoUninitialize`，
+   把那个 STA 引用清掉 → 回退整机后 `soundcard` 会拿到 `CO_E_NOTINITIALIZED`。
+   而"进程退出后自动回退"走的正是这条路径。修：`_co_initialize()` 返回是否新增了计数，
+   `ProcessLoopback` 记住它、只在真加过时才 `CoUninitialize`。
+2. **回退原因只进 stdout，不进状态** —— GLOSSARY「降级」要求"在状态里说明原因"。
+   现在写 `ACC["source_note"]`，`/health` 新增 `audioNote` 字段。
+3. **看门狗对进程路径是空操作** —— `_capture_process` 原来不设 `ACC["rec"]`，
+   `_break_capture_stream()` 打不断它；健康检查重开时旧线程还在 `read()` 里，
+   两路会同时往缓冲里塞。修：把 `ProcessLoopback` 挂到 `ACC["rec"]`，退出时清掉。
+4. **`_resolve_audio_source` 号称"永不抛"但 `resolve_pid` 在 try 之外** ——
+   进程表读不到时采集线程会直接死。修：整段包住。
+5. 新增 4 条测试：中断→回退并留原因、来源用不了要留原因、正常整机不写原因、
+   解析出错不抛。python 37 条全绿。
+
+审查指出但**没改**的（属判断题，记在这里）：`ProcessLoopback` 的 `channels/bits`
+从未传过非默认值（Speculative Generality）；`read()` 把所有非 `S_OK` 都当
+`TargetGone`，其实"设备被占"和"目标退出"该分开（行为上都是回退，只是日志措辞会误报）。

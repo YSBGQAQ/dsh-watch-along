@@ -200,10 +200,19 @@ def _query_interface(ptr, iid):
 
 
 def _co_initialize():
+    """初始化本线程的 COM，返回**本模块是否新增了一次引用**。
+
+    只有拿到 S_OK / S_FALSE 才算我们自己持有，才该在 close() 里配对 Uninitialize。
+    这条很要命：`asr_service._capture_loop` 线程开头已经用 `CoInitialize`（STA）初始化过，
+    这里 `CoInitializeEx(…, MTA)` 会返回 `RPC_E_CHANGED_MODE` 而**不增加计数**；
+    若无条件 Uninitialize，就会把那个 STA 引用清掉 —— 回退整机后 `soundcard` 会拿到
+    `CO_E_NOTINITIALIZED`，而那条正是"进程退出后自动回退"要走的路径。
+    """
     try:
-        ctypes.WinDLL("ole32").CoInitializeEx(None, 0x0)  # COINIT_MULTITHREADED
+        hr = ctypes.WinDLL("ole32").CoInitializeEx(None, 0x0)  # COINIT_MULTITHREADED
+        return hr in (0, 1)  # S_OK / S_FALSE
     except Exception:
-        pass
+        return False
 
 
 def _co_uninitialize():
@@ -358,8 +367,11 @@ def _activation_handler():
 
 
 def _activate_process_loopback(pid):
-    """返回 (IAudioClient*, keepalive)。失败抛 OSError（带 HRESULT）。"""
-    _co_initialize()
+    """返回 (IAudioClient*, keepalive)。失败抛 OSError（带 HRESULT）。
+
+    COM 由调用方（`ProcessLoopback.open`）先初始化 —— 这里不再自己 CoInitialize，
+    否则和 close() 里的 Uninitialize 配不成对（见 `_co_initialize` 的注释）。
+    """
     mmdevapi = ctypes.WinDLL("mmdevapi")
     activate = mmdevapi.ActivateAudioInterfaceAsync
     activate.argtypes = [
@@ -431,10 +443,18 @@ class ProcessLoopback:
         self._started = False
         self._last_alive_check = 0.0
         self._block_align = channels * bits // 8
+        self._co_held = False  # 本对象是否自己新增了一次 COM 引用
 
     # -- 生命周期 --
     def open(self):
-        audio_client, handler = _activate_process_loopback(self.pid)
+        self._co_held = _co_initialize()
+        try:
+            audio_client, handler = _activate_process_loopback(self.pid)
+        except Exception:
+            if self._co_held:
+                _co_uninitialize()
+                self._co_held = False
+            raise
         self.audio_client = audio_client
         self._handler = handler
         try:
@@ -494,7 +514,9 @@ class ProcessLoopback:
         self.capture_client = ctypes.c_void_p()
         _release(self.audio_client)
         self.audio_client = ctypes.c_void_p()
-        _co_uninitialize()
+        if self._co_held:
+            _co_uninitialize()
+            self._co_held = False
 
     def __enter__(self):
         return self.open()

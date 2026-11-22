@@ -203,6 +203,54 @@ class AudioSourceCase(unittest.TestCase):
         # python 自己的 PID 必然存在，这条同时验证「纯数字当 PID」那条支路
         self.assertEqual(A._resolve_audio_source(f"process:{os.getpid()}"), ("process", os.getpid()))
 
+    def test_解析出错也不抛(self):
+        # 进程表读不到（权限 / 系统调用失败）不能让采集线程直接死掉
+        with mock.patch.object(A.procloopback, "resolve_pid", side_effect=OSError("拒绝访问")):
+            kind, why = A._resolve_audio_source("process:ego")
+        self.assertEqual(kind, "system")
+        self.assertIn("出错", why)
+
+
+class CaptureLoopFallbackCase(unittest.TestCase):
+    """进程回环失败时的回退语义：必须真的走整机，且**在状态里**留下原因。"""
+
+    def setUp(self):
+        A.ACC.update(buf=zeros(0), base=0.0, emitted_until=0.0, seen=[], error=None,
+                     thread=None, stop=False, device=None, raw_path=None, raw_started=None,
+                     last_chunk_at=0.0, rec=None, source_note=None)
+        self.tmp = tempfile.mkdtemp()
+        self._p = mock.patch.object(A, "RUN_DIR", self.tmp)
+        self._p.start()
+
+    def tearDown(self):
+        self._p.stop()
+
+    def test_进程回环中断要回退整机并留原因(self):
+        calls = []
+        with mock.patch.object(A, "_resolve_audio_source", lambda spec: ("process", 4321)), \
+                mock.patch.object(A, "_capture_process",
+                                  side_effect=A.procloopback.TargetGone("目标走了")), \
+                mock.patch.object(A, "_capture_device", lambda: calls.append(1)):
+            A._capture_loop()
+        self.assertEqual(calls, [1], "中断后没有回退到整机")
+        self.assertIn("进程回环中断", A.ACC["source_note"] or "")
+
+    def test_来源用不了也要留原因(self):
+        calls = []
+        with mock.patch.object(A, "_resolve_audio_source", lambda spec: ("system", "找不到进程 x")), \
+                mock.patch.object(A, "_capture_device", lambda: calls.append(1)):
+            A._capture_loop()
+        self.assertEqual(calls, [1])
+        self.assertIn("找不到进程", A.ACC["source_note"])
+
+    def test_走整机时不写原因(self):
+        calls = []
+        with mock.patch.object(A, "_resolve_audio_source", lambda spec: ("system", None)), \
+                mock.patch.object(A, "_capture_device", lambda: calls.append(1)):
+            A._capture_loop()
+        self.assertEqual(calls, [1])
+        self.assertIsNone(A.ACC["source_note"], "正常走整机却记了一条降级原因")
+
 
 if __name__ == "__main__":
     unittest.main()
