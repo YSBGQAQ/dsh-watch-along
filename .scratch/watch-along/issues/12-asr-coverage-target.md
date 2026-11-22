@@ -4,7 +4,7 @@
 
 **Blocked by:** 05
 
-**Status:** closed（验收完成但目标未达标；根因已定位，用户 2026-11-22 决定收口）
+**Status:** resolved（验收完成但目标未达标；根因已定位，用户 2026-11-22 决定收口）
 
 - [x] 日志出现 `开始连续录音：扬声器 (Realtek High Definition Audio)`
 - [ ] `curl -s http://127.0.0.1:8766/` 返回的 `device` 是**正在出声的那台**

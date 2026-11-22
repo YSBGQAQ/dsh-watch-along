@@ -33,8 +33,9 @@ MODEL_DIR = (
     or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models", "whisper-turbo")
 )
 RATE = 16000
-# 2026-11-22：轮询从 3s 改成 15s 后，20s 缓冲只剩约 3s 余量，回放实测被 base 钳住 6 次。
-# 两个上限一起放大到 40s，给游标留足追赶空间（回放证明放大它们不改变识别精度）。
+# 2026-11-22 更正：旧注释写「轮询从 3s 改成 15s」是错的。插件真正的心跳在
+# index.js 的 `windowSec: 3`，每 3 秒一次；15 是事件长轮询的 maxWaitSec，与 ASR 无关。
+# 40 秒在 3 秒节奏下只是更宽裕（给游标追赶留余量），不影响识别精度。
 KEEP_SEC = 40.0    # 缓冲只留最近 40 秒
 MARGIN_SEC = 0.8   # 句尾离缓冲边缘太近的先不发 —— 它可能还没说完
 SEEN_MAX = 200     # 记住最近 200 句的归一化文本
