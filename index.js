@@ -294,7 +294,13 @@ export function apply(ctx, opts = {}) {
       if (!waker) return
       waker.feed({ kind, ...payload })
       // 语音事件说明有人在说话，但不等于"用户回应了我们"—— 这里不归零，交给历史判定
-      void waker.maybeWake({ kind, ...payload })
+      void waker.maybeWake({ kind, ...payload }).then((r) => {
+        // 成功也要留痕：不然"到底有没有叫醒"只能靠会话里有没有新消息来猜
+        if (r?.woke) both(`主动唤醒已投递：${String(r.text ?? '').length} 字`)
+        else if (r?.reason && r.reason !== 'disabled' && r.reason !== 'not-worth-it') {
+          both(`主动唤醒没发：${r.reason}`)
+        }
+      })
     },
     onWatchStart: () => waker?.reset(),
   })

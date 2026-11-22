@@ -4,7 +4,7 @@
 
 **Blocked by:** 02（事件队列）
 
-**Status:** open（**机制要换**：宿主没向插件暴露会话服务，"塞 user 消息"这条路走不通；改为「长轮询 + 事件返回」形态，见 Comments。判定层 12 条测试仍有效）
+**Status:** claimed（接线按 `agent.steer` 完成，等一次重启做实机验证）
 
 ## 决策（与用户逐条敲定，2026-11-21 10:46）
 
@@ -130,6 +130,27 @@ function callerSessionOf(run) {
 
 **我上一版写的「改用长轮询」是错的方向**（长轮询确实有，但不是作者的做法，也不需要为此重设计）。
 判定层 `src/wake.mjs` 原样保留：它产出的就是一串 prompt 文本，`send` 换成 steer 即可。
+
+### 2026-11-22 接线完成（等实机验证）
+
+- **新增 `src/agent-delivery.mjs`**：`userMessage()` 造 user 角色消息，
+  `deliverToAgent(agent, text)` 走 `agent.steer`，失败退 `followup`，两条都失败如实返回。
+  **8 条测试**：消息形状 / 每次 id 不同 / steer 抛错要退 / 两条都抛要报失败 / 没 agent /
+  空文本不发 / 只有 followup 也能用。
+- **`watch_start` 的 `execute(args, run)` 现在收第二个参数**，把 `run.agent` 存下来。
+  「目标会话 = 最后一次 watch_start 的那个会话」从此是**抓到的**，不是猜的 ——
+  之前那个"取 `list()` 第一条"的妥协已删掉。
+- waker 的 `send` 换成 `deliverToAgent(lastAgent, text)`，**完全不碰 `sessionController`**。
+- **开关**：环境变量 `WATCH_ALONG_WAKE=1`，或建一个标记文件 `.scratch/run/wake-on`
+  （给 DSH 设环境变量要改系统设置并重登，试验一次不值当）。
+- 投递成功/失败都写进 `plugin.log`：`主动唤醒已投递：N 字` / `主动唤醒没发：<原因>`。
+
+**验证步骤**（重启一次即可）：重启 DSH → 调 `watch_start` → 日志出现
+`主动唤醒已绑定会话：<id>` → 等一次 `high` 或切镜 → 会话里冒出 `[陪看] …`，
+日志出现 `主动唤醒已投递`。
+
+**仍不生效的一条**：「连续 5 次没回应就停」—— 读会话历史要 `sessionController`
+（宿主不给），`hasUserMessageSince` 仍传 `null`，走不计数分支。要做得另找读会话的路子。
 
 **因此票 11 不从"受阻"结案，改成"机制要换"** —— 判定层 12 条测试仍有效，接法换一条。
 
