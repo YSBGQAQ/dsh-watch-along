@@ -1,13 +1,18 @@
 # 需要下载的东西（交办清单）
 
+> **2026-11-22 更新：OCR 已回退 CPU。**
+> `onnxruntime-gpu 1.26` 在常驻服务里出现显存/内存线性泄漏（约 20 秒打满 16GB 显存、OCR 进程涨到 17.9GB），三次整轮测试 0 次成功；CPU 版两轮 5 分钟 OCR 79.2% / 76.1%、不卡。
+> 已卸载 GPU 包、离线装回 `onnxruntime 1.32.0` CPU 版。**下面带【已弃用】标记的 GPU 资源不再安装、不再引用**；文件暂留在包内，彻底删除需经用户确认。
+
 约定落地位置：`C:\Users\24206\Desktop\源码与作者说明\_deps\`
 
 ```
 _deps\
-├── wheels\      ← pip 下载的 .whl
+├── wheels\      ← pip 下载的 .whl（含 onnxruntime-1.32.0 CPU 版）
 ├── models\
 │   ├── whisper-large-v3-turbo-ct2\
 │   └── ppocr\
+├── cuda_dlls\   ← 【已弃用】原为 OCR GPU 准备的 3 个 cu12 DLL
 └── venv\        ← 本地创建，不用下载
 ```
 
@@ -34,7 +39,11 @@ soundcard>=0.4
 numpy>=1.26
 nvidia-cublas-cu12
 nvidia-cudnn-cu12
+nvidia-cuda-nvrtc-cu12
 ```
+
+> **OCR 用 CPU 版 `onnxruntime`**，不要再装 `onnxruntime-gpu`（两者同名、不能共存）。
+> 下面三个 nvidia wheel 是给 **faster-whisper 声音转写** 用的，与 OCR 无关。
 
 然后：
 
@@ -45,14 +54,28 @@ nvidia-cudnn-cu12
 | 包 | 体积 | 用途 | 备注 |
 |---|---|---|---|
 | `rapidocr` ≥3.9.0 | ~30 MB | OCR | **wheel 里已含 PP-OCRv6 det/rec small**，不用另下模型 |
-| `onnxruntime` | ~15 MB | 跑 ONNX | CPU 版够用；要 GPU 就换 `onnxruntime-gpu`（~200 MB） |
-| `faster-whisper` + `ctranslate2` | ~40 MB | 语音转写 | |
+| `onnxruntime` | ~15 MB | OCR 推理（CPU） | 实测 1.32；离线 wheel 已在 `_deps\wheels\` |
+| `faster-whisper` + `ctranslate2` | ~40 MB | 语音转写（GPU） | |
 | `soundcard` | <1 MB | 环回录音 | |
 | `numpy` | ~15 MB | 音频处理 | |
-| `nvidia-cublas-cu12` | ~500 MB | GPU 推理依赖 | 若机器已装 CUDA 12 可跳过 |
-| `nvidia-cudnn-cu12` | ~700 MB | GPU 推理依赖 | 同上 |
+| `nvidia-cublas-cu12` | ~500 MB | 声音转写的 GPU 依赖 | 若机器已装 CUDA 12 可跳过 |
+| `nvidia-cudnn-cu12` | ~700 MB | 同上 | 同上 |
+| `nvidia-cuda-nvrtc-cu12` | ~76 MB | 同上 | 同上 |
 
 国内镜像可加速：加 `-i https://pypi.tuna.tsinghua.edu.cn/simple`
+
+### 2.1 【已弃用】GPU 资源（2026-11-22 回退，不再安装）
+
+这些文件**暂留在包内但不再引用**，彻底删除需经用户确认（合计约 574 MB）。保留的目的是留个回溯：当初为 GPU 化下载过什么。
+
+| 文件 | 位置 | 大小 | SHA256 |
+|---|---|---|---|
+| `onnxruntime_gpu-1.26.0-cp312-cp312-win_amd64.whl` | 包根目录 | 226,548,963 B | `5f49c44689894650990e4c8a857d2edafc276fbd79bba57ceb224bd18d25d491` |
+| `cudart64_12.dll` | `_deps\cuda_dlls\` | 573,952 B | `c2c9a9c22a9bcba90e261825968836787b331038047a26770cffb7a583c28344` |
+| `cufft64_11.dll` | `_deps\cuda_dlls\` | 276,121,600 B | `f4fea9227b14843894ad5436725f9638b172171142c95291fc6ae7a493248221` |
+| `curand64_10.dll` | `_deps\cuda_dlls\` | 71,955,968 B | `3465fd1b46e551339b8f44c455756a0f2cba8bd846562eb659040d48edb7aaac` |
+
+失败原因见 ADR 0002 / 0004：CUDA 后端的 `kNextPowerOfTwo` 显存池对不同尺寸输入持续按 2 的幂扩且不归还，最后连 `cublasCreate` 都失败。
 
 ## 3. 下模型
 
@@ -100,23 +123,23 @@ cd "C:\Users\24206\Desktop\源码与作者说明\_deps\wheels"
 
 告诉我一声，我用离线方式安装（`pip install --no-index --find-links=…`），全程不联网。
 
-**总计约 3 GB**（其中 cublas + cudnn 占 1.2 GB、whisper 占 1.6 GB）。
+**总计约 3 GB**（其中 NVIDIA 轮子约 1.3 GB、whisper 1.6 GB）。
 
 ## 5. 如果下不动
 
 优先级从高到低：
 
 1. **只下 whisper + rapidocr 相关**（约 1.7 GB）——足够先把画面和字幕跑起来
-2. **cublas / cudnn 先跳过**——转写会退到 CPU int8，慢但能验证链路
+2. **NVIDIA 轮子跳过时，声音按 ADR 0003 直接报错**（不再静默退到 CPU int8 假装能用）；OCR 本来就是 CPU 版，不受影响
 3. 真下不动就停在字幕层，声音那期等网络好的时候再补
 
 ---
 
 ## 6. 交付包（项目完成后打包，两个包）
 
-定稿于 2026-11-21 06:03。会发到网盘供他人配环境，所以必须**自解释**：拿到包的人不看我们的对话也能装起来。
+定稿于 2026-11-21 06:03；2026-11-22 曾追加 GPU OCR 资源，**同日已整体回退 CPU**。会发到网盘供他人配环境，所以必须**自解释**：拿到包的人不看我们的对话也能装起来。
 
-**拆两个包**：必需包装上就能跑画面 + 字幕 + CPU 转写；GPU 包可选，装上才有 GPU 转写。
+**拆两个包**：必需包装上就能跑画面 + 字幕 + CPU OCR；GPU 包只给声音转写用。
 
 ### 6.1 `watch-along-env-required-v1.zip`（约 1.85 GB）
 
@@ -133,7 +156,7 @@ cd "C:\Users\24206\Desktop\源码与作者说明\_deps\wheels"
 └── SHA256SUMS.txt
 ```
 
-### 6.2 `watch-along-env-gpu-v1.zip`（约 1.33 GB）
+### 6.2 `watch-along-env-gpu-v1.zip`（约 1.33 GB，只给声音转写）
 
 ```
 ├── wheels\
@@ -143,6 +166,8 @@ cd "C:\Users\24206\Desktop\源码与作者说明\_deps\wheels"
 ├── install-gpu.ps1                      ← 复用同一个 venv 追加安装
 └── SHA256SUMS.txt
 ```
+
+> 原先列在这里的 `onnxruntime_gpu-...whl` 与 `cuda_dlls\` 已移除，见 2.1【已弃用】。
 
 ### 6.3 `samples\` 只放合成素材
 
@@ -174,4 +199,4 @@ cd "C:\Users\24206\Desktop\源码与作者说明\_deps\wheels"
 
 ### 6.6 合规
 
-NVIDIA 的两个轮子按 EULA **不属于可公开再分发的产物**。用户已明确决定带进包里（Q1 = b），前提是这份包**只做私下转发、不公开挂出**。详见 ADR 0004。若要公开发布，先剔除三个 `nvidia_*` wheel，README 改成一条 `pip install`。
+NVIDIA 的轮子按 EULA **不属于可公开再分发的产物**。用户已明确决定带进包里（Q1 = b），前提是这份包**只做私下转发、不公开挂出**。详见 ADR 0004。若要公开发布，先剔除 `nvidia_*` wheel，README 改成一条 `pip install`。

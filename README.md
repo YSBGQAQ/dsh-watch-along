@@ -29,7 +29,7 @@ pip install --no-index --find-links=<wheels 目录> -r requirements.txt
 | 包 | 版本 | 用途 | 从哪下 |
 |---|---|---|---|
 | `rapidocr` | ≥ 3.9（实测 3.10.0） | 字幕 OCR。**wheel 内已含 PP-OCRv6 det/rec small 模型**（约 31 MB），不用另下 | <https://pypi.org/project/rapidocr/> |
-| `onnxruntime` | ≥ 1.17（实测 1.32） | OCR 推理 | <https://pypi.org/project/onnxruntime/> |
+| `onnxruntime` | ≥ 1.17（实测 1.32） | OCR 推理，CPU | <https://pypi.org/project/onnxruntime/> |
 | `faster-whisper` | ≥ 1.1（实测 1.2.1） | 语音转写 | <https://pypi.org/project/faster-whisper/> |
 | `ctranslate2` | 随 faster-whisper（实测 4.9） | 转写推理引擎 | 同上 |
 | `soundcard` | ≥ 0.4（实测 0.4.6） | 系统声音环回 | <https://pypi.org/project/soundcard/> |
