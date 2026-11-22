@@ -26,6 +26,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import numpy as np
 
+import procloopback  # 同目录兄弟模块（进程回环，票 17）
+
 # 模型目录三级取值：环境变量 → 仓库内 models/whisper-turbo → 加载时报错并指出该设哪个变量。
 # 之前是硬编码绝对路径，换台机器直接崩（票 15）。
 MODEL_DIR = (
@@ -137,19 +139,63 @@ def _to_mono(chunk):
     return a.reshape(-1)
 
 
-def _capture_loop():
-    """后台线程：一直录，并且**跟着系统的默认输出设备走**。
+def _resolve_audio_source(spec):
+    """决定这一轮走哪条采集。返回 `(kind, payload)`，**永不抛**。
+
+    - `("system", None)`     整机混音
+    - `("process", pid)`     只录该进程（票 17）
+    - `("system", "<原因>")` 配置用不了，回退整机 —— 原因必须打日志。
+      静默回退最糟：用户会以为"只录视频"生效了，实际录的还是整机。
+    """
+    try:
+        kind, target = procloopback.parse_source(spec)
+    except ValueError as e:
+        return ("system", f"audioSource 配置看不懂（{e}）")
+    if kind == "system":
+        return ("system", None)
+    pid = procloopback.resolve_pid(target)
+    if pid is None:
+        return ("system", f"找不到进程 {target}")
+    return ("process", pid)
+
+
+def _ingest(chunk):
+    """把一块单声道 float32 接进缓冲。整机与进程两条采集路径共用。"""
+    if not len(chunk):
+        return
+    ACC["last_chunk_at"] = time.time()
+    ACC["buf"] = np.concatenate([ACC["buf"], chunk])
+    # 原始 PCM 原样落盘：不受 KEEP_SEC 裁剪影响，事后可拿它和 mp3 做 A/B，
+    # 分清「音频本身差」还是「实时管线处理差」。只 append 裸 s16le、不写 wav 头
+    # —— 进程被强杀也不会损坏数据。
+    rp = ACC["raw_path"]
+    if rp:
+        try:
+            pcm = (np.clip(chunk, -1, 1) * 32767).astype(np.int16).tobytes()
+            with open(rp, "ab") as f:
+                f.write(pcm)
+        except Exception:
+            pass
+
+
+def _capture_process(pid):
+    """按进程录。目标退出/流断时抛出去，由 _capture_loop 决定回退整机。"""
+    name = procloopback.pid_name(pid) or "?"
+    ACC["device"] = f"进程 {name}({pid})"
+    with procloopback.ProcessLoopback(pid, rate=RATE) as cap:
+        print(f"[asr] 开始按进程录音：{name} (pid={pid})", flush=True)
+        while not ACC["stop"]:
+            for block in cap.read(0.5):
+                _ingest(block)
+
+
+def _capture_device():
+    """整机环回（默认路径）：一直录，并且**跟着系统的默认输出设备走**。
 
     为什么必须盯设备：用户换耳机/切 HDMI 之后，默认扬声器变了，而我们这条流
     还挂在旧设备上 —— 表现就是"一直没字幕"，但看不出原因。所以每隔 2 秒比一次，
     变了就重开流。
     """
-    ctypes.windll.ole32.CoInitialize(None)  # COM 是按线程的，这个线程要自己初始化
-    # 录音来源：默认整机混音。process:<x> 暂时没有实现采集，明确回退并留日志 ——
-    # 静默忽略配置比报错更糟，用户会以为"只录视频"生效了。
-    src = os.environ.get("WATCH_ALONG_AUDIO_SOURCE", "system")
-    if src != "system":
-        print(f"[asr] audioSource={src} 尚未实现，已回退整机混音", flush=True)
     try:
         import soundcard as sc
     except Exception as e:
@@ -182,20 +228,7 @@ def _capture_loop():
                         # 只打一次：以后再遇到「录到的形状变了」，日志第一行就能看出来
                         print(f"[asr] 录音块 shape={np.shape(raw)} → 单声道 {len(chunk)} 帧", flush=True)
                         announced = True
-                    if len(chunk):
-                        ACC["last_chunk_at"] = time.time()
-                        ACC["buf"] = np.concatenate([ACC["buf"], chunk])
-                        # 原始环回 PCM 原样落盘：不受 KEEP_SEC 裁剪影响，事后可拿它
-                        # 和 mp3 做 A/B，分清「音频本身差」还是「实时管线处理差」。
-                        # 只 append 裸 s16le，不写 wav 头 —— 进程被强杀也不会损坏数据。
-                        rp = ACC["raw_path"]
-                        if rp:
-                            try:
-                                pcm = (np.clip(chunk, -1, 1) * 32767).astype(np.int16).tobytes()
-                                with open(rp, "ab") as f:
-                                    f.write(pcm)
-                            except Exception:
-                                pass
+                    _ingest(chunk)
                     if time.time() >= nextCheck:
                         nextCheck = time.time() + 2.0
                         try:
@@ -209,6 +242,26 @@ def _capture_loop():
             ACC["error"] = f"{type(e).__name__}: {e}"
             print(f"[asr] 录音中断：{ACC['error']}（2 秒后重试）", flush=True)
             time.sleep(2)
+
+
+def _capture_loop():
+    """采集线程入口：先按 audioSource 选路径，进程回环失败就回退整机。
+
+    回退**只发生一次**：这一轮里进程回环一旦中断，剩下的时间都走整机混音。
+    反复重试没有意义（目标进程真退了就是退了），而且会每 2 秒刷一行日志。
+    """
+    ctypes.windll.ole32.CoInitialize(None)  # COM 是按线程的，这个线程要自己初始化
+    kind, payload = _resolve_audio_source(os.environ.get("WATCH_ALONG_AUDIO_SOURCE", "system"))
+    if kind == "process":
+        try:
+            _capture_process(payload)
+            return  # 正常退出（ACC["stop"] 被置真）
+        except Exception as e:
+            print(f"[asr] 进程回环中断（{type(e).__name__}: {e}），回退整机混音", flush=True)
+    elif payload:
+        # 配置看不懂 / 找不到进程：明确说一句再回退，不静默
+        print(f"[asr] {payload}，回退整机混音", flush=True)
+    _capture_device()
 
 
 def _break_capture_stream():

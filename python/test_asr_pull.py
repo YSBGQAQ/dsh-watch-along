@@ -183,5 +183,26 @@ class CaptureHealthCase(unittest.TestCase):
         self.assertFalse(sc.called, "音频正常时不该重开")
 
 
+class AudioSourceCase(unittest.TestCase):
+    """audioSource 的判定层（票 17）：哪种写法走哪条采集、回退时给不给原因。"""
+
+    def test_默认走整机(self):
+        self.assertEqual(A._resolve_audio_source("system"), ("system", None))
+
+    def test_配置看不懂要回退并留原因(self):
+        kind, why = A._resolve_audio_source("device")
+        self.assertEqual(kind, "system")
+        self.assertTrue(why and "看不懂" in why, f"回退没给原因：{why!r}")
+
+    def test_找不到进程要回退并留原因(self):
+        kind, why = A._resolve_audio_source("process:no-such-process-xyz")
+        self.assertEqual(kind, "system")
+        self.assertIn("找不到进程", why)
+
+    def test_能解析到活进程(self):
+        # python 自己的 PID 必然存在，这条同时验证「纯数字当 PID」那条支路
+        self.assertEqual(A._resolve_audio_source(f"process:{os.getpid()}"), ("process", os.getpid()))
+
+
 if __name__ == "__main__":
     unittest.main()

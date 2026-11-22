@@ -13,7 +13,7 @@ export const DEFAULTS = Object.freeze({
   speech: true,
   speechPerMin: 6,
   host: '0.0.0.0',
-  audioSource: 'system', // system = 整机混音；process:<pid|名字> = 只录某个进程（尚未实现采集） // 手机端监听地址：0.0.0.0 = 局域网可连，127.0.0.1 = 只本机
+  audioSource: 'system', // system = 整机混音；process:<pid|名字> = 只录某个进程（采集已实现，票 17）。注意：真正生效的是 asr_service 的环境变量 WATCH_ALONG_AUDIO_SOURCE，这个设置项还没接到那条线上 // 手机端监听地址：0.0.0.0 = 局域网可连，127.0.0.1 = 只本机
   // 高级（折叠）：裸阈值，正常不该改
   region: { top: 0, height: 1 },
   maxWaitSec: 15,
