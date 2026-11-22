@@ -107,8 +107,8 @@ export function createSessionStats({ now = Date.now, rss = () => process.memoryU
  * 一行而不是多行：这行会被写进 plugin.log，多行会跟"拼图失败"之类的刷屏混在一起，
  * 事后 grep 一条就能看全。
  */
-export function formatSummary(s, extra = '') {
-  if (!s) return '[会话汇总] （没有数据：这一段没跑起来）'
+export function formatSummary(s, extra = '', label = '会话汇总') {
+  if (!s) return `[${label}] （没有数据：这一段没跑起来）`
   const kinds = ['motion', 'ocr', 'speech']
     .filter((k) => s.byKind?.[k] != null)
     .map((k) => `${k} ${s.byKind[k]}`)
@@ -129,5 +129,5 @@ export function formatSummary(s, extra = '') {
   ]
   if (extra) parts.push(extra)
   if (s.failed) parts.push(`采集中断：${s.reason ?? '未知原因'}`)
-  return `[会话汇总] ${parts.join('｜')}`
+  return `[${label}] ${parts.join('｜')}`
 }

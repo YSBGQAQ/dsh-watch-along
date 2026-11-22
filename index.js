@@ -343,6 +343,7 @@ export function apply(ctx, opts = {}) {
   let lastSheet = null // 最近一张拼图的编号，唤醒时交给模型看图
   let lastComposite = null // 最近一张"每 3 秒按时间拼出来的"多帧图
   let composeTimer = null
+  let snapshotTimer = null // 每 5 分钟打一行快照：防"最后没调 watch_stop，数据全丢"
   // 拼图成败只在这里能数到（service 不知道是插件在定时拼图），汇总时一并报出去。
   let composeOk = 0
   let composeFail = 0
@@ -450,6 +451,10 @@ export function apply(ctx, opts = {}) {
         clearInterval(composeTimer)
         composeTimer = null
       }
+      if (snapshotTimer) {
+        clearInterval(snapshotTimer)
+        snapshotTimer = null
+      }
       if (observeTimer) {
         clearInterval(observeTimer)
         observeTimer = null
@@ -531,6 +536,21 @@ export function apply(ctx, opts = {}) {
           /* 非 Node 定时器 */
         }
         both(`静默观察已开启：每 ${obs} 秒一次（只更新理解，不输出文字）`)
+      }
+
+      // 每 5 分钟打一行快照。为什么要有：汇总只在 stop() 里打，而用户收尾时习惯说
+      // "停止后台任务"——DSH 未必会调 watch_stop。那一轮就没有 RSS 曲线和事件数了。
+      // 快照是只读的：不清计数、不停采集。
+      if (snapshotTimer) clearInterval(snapshotTimer)
+      snapshotTimer = setInterval(() => {
+        const s = service.snapshot()
+        const composeText = `拼图 ${composeOk + composeFail} 张（成功 ${composeOk} / 失败 ${composeFail}）`
+        both(formatSummary(s, composeText, '会话快照 5min'))
+      }, 5 * 60_000)
+      try {
+        snapshotTimer.unref?.()
+      } catch {
+        /* 非 Node 定时器 */
       }
 
       // 每一次 watch_start 都让循环重新起跑（含"上次已收工"的情况）

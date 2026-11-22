@@ -133,6 +133,18 @@ test('停止时交出会话汇总：事件分三类、id 连续、RSS 有采样'
   assert.deepEqual(st.session, stopped, 'status 里也应该能拿到最近一次汇总')
 })
 
+test('会话快照是只读的：打完快照，最终汇总的数不变', async () => {
+  const svc = createWatchService(base())
+  await svc.start({ window: '直播' })
+  svc.emit('ocr', { text: '一' })
+  const snap = svc.snapshot()
+  assert.equal(snap.events, 1)
+  assert.equal(snap.firstId, 1)
+  svc.emit('ocr', { text: '二' })
+  const st = await svc.stop()
+  assert.equal(st.session.events, 2, '快照把计数清掉了')
+})
+
 test('采集中途断掉也要把账结掉（失败注入要用）', async () => {
   let cap = null
   let stopped = null

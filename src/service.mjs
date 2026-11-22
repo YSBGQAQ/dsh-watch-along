@@ -421,5 +421,18 @@ export function createWatchService({
     return event
   }
 
-  return { start, stop, frame, rawFrame, sheet, composeSheet, status, events, emit }
+  /**
+   * 会话进行中的快照：只读，不清计数、不改状态。
+   * 用途是每 5 分钟打一行 —— 万一最后没调 watch_stop，至少还有 RSS 趋势和事件数。
+   */
+  function snapshot() {
+    try {
+      stats.sample()
+      return stats.summary({ at: now(), frameCount: frames })
+    } catch {
+      return null
+    }
+  }
+
+  return { start, stop, frame, rawFrame, sheet, composeSheet, status, events, emit, snapshot }
 }

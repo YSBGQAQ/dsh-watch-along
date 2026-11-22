@@ -63,6 +63,15 @@ test('汇总一行里必须带齐三个数：事件数、断号、RSS', () => {
   assert.equal(line.split('\n').length, 1, '必须是一行，别跟刷屏日志混在一起')
 })
 
+test('标签可换：快照不该冒充"会话汇总"', () => {
+  const s = createSessionStats({ now: () => 0, rss: () => 1024 })
+  s.reset(0)
+  s.sample()
+  const sum = s.summary({ at: 1000 })
+  assert.match(formatSummary(sum), /^\[会话汇总\]/)
+  assert.match(formatSummary(sum, '', '会话快照 5min'), /^\[会话快照 5min\]/)
+})
+
 test('时长格式：秒 / 分秒 / 时分秒', () => {
   assert.equal(fmtDuration(6), '6 秒')
   assert.equal(fmtDuration(1866), '31 分 06 秒')
