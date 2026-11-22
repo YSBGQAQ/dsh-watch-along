@@ -248,3 +248,21 @@ test('摘要按时间正序、每条标来源、带时刻', () => {
   assert.match(lines[1], /声音：这风不对啊/)
   assert.ok(lines[0].includes('742.5s'), '缺相对秒数')
 })
+
+// ── 静默观察轮 ──────────────────────────────────────────────
+test('observe() 只说"别说话"，不带陪聊提示词', async () => {
+  const sent = []
+  const w = createWaker({
+    enabled: true,
+    gapSec: 30,
+    promptTemplate: '你是搭子，说两句',
+    sheetId: () => 'S1',
+    send: async (t) => sent.push(t),
+  })
+  await w.observe()
+  assert.equal(sent.length, 1)
+  assert.match(sent[0], /【观察】/)
+  assert.match(sent[0], /不要输出任何文字/)
+  assert.doesNotMatch(sent[0], /说两句/, '观察轮不该带陪聊指令，否则它又会开口')
+  assert.match(sent[0], /sheetId:"S1"/)
+})

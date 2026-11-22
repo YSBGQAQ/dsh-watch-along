@@ -301,6 +301,7 @@ export function apply(ctx, opts = {}) {
   let eventSeq = 0
   let lastWokeSeq = 0
   let lastSheet = null // 最近一张拼图的编号，唤醒时交给模型看图
+  let observeTimer = null // 静默观察轮的定时器（observeSec > 0 才有）
   if (wakeEnabled) {
     waker = createWaker({
       enabled: true,
@@ -381,6 +382,12 @@ export function apply(ctx, opts = {}) {
         }
       })
     },
+    onWatchStop: () => {
+      if (observeTimer) {
+        clearInterval(observeTimer)
+        observeTimer = null
+      }
+    },
     onWatchStart: () => {
       waker?.reset()
       // 懒取 sessionController：apply 时探是拿不到的（服务注册得比插件晚），
@@ -398,6 +405,22 @@ export function apply(ctx, opts = {}) {
         both('主动说话已关闭（说话间隔 = 0）：只采集，不主动开口')
         return
       }
+      // 静默观察：每隔 observeSec 秒叫醒它"只看不说"，让它保持对剧情的跟进。
+      // 注意：这一轮它仍然是一轮模型调用（花钱），只是**不产生聊天气泡**。
+      if (observeTimer) clearInterval(observeTimer)
+      const obs = cur.observeSec ?? 0
+      if (obs > 0) {
+        observeTimer = setInterval(() => {
+          waker?.observe?.().catch?.((e) => both(`静默观察出错：${e?.message ?? e}`))
+        }, obs * 1000)
+        try {
+          observeTimer.unref?.()
+        } catch {
+          /* 非 Node 定时器 */
+        }
+        both(`静默观察已开启：每 ${obs} 秒一次（只更新理解，不输出文字）`)
+      }
+
       // 每一次 watch_start 都让循环重新起跑（含"上次已收工"的情况）
       watchLoop?.restart()
     },

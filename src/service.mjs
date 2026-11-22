@@ -68,6 +68,7 @@ export function createWatchService({
   onEvent = null,
   // 每次 start() 成功后调一次：新一轮陪看要把唤醒的计数/缓冲重置。
   onWatchStart = null,
+  onWatchStop = null, // 停止陪看时通知（用于清掉静默观察的定时器）
 } = {}) {
   if (typeof encode !== 'function') throw new Error('createWatchService 需要注入 encode（PNG 编码器）')
 
@@ -104,6 +105,11 @@ export function createWatchService({
   }
 
   async function stop() {
+    try {
+      onWatchStop?.()
+    } catch {
+      /* 通知失败不能挡住停止 */
+    }
     speech?.stop?.()
     try {
       capture?.stop?.()

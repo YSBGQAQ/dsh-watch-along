@@ -98,6 +98,36 @@ export function createWaker({
   let misses = 0
   let exhausted = false
 
+  /**
+   * 静默观察轮：叫醒它更新理解，但**明确要求不输出任何文字**。
+   *
+   * 为什么要说"不要调用工具之外的任何东西"：模型不说的话，界面上就不会出现聊天气泡；
+   * 一旦它写了一个字，那一条就会留在会话里，看起来像在刷屏。
+   */
+  async function observe() {
+    const text = buildSummary(events, { now: now(), windowMs: summaryWindowMs, max: summaryMax, format })
+    const sid = (() => {
+      try {
+        return sheetId?.() ?? null
+      } catch {
+        return null
+      }
+    })()
+    const prompt =
+      `【观察】现在是 ${new Date(now()).toTimeString().slice(0, 8)}，过去 ${gapSec} 秒的变化如下。\n` +
+      `${text || '（没有新变化）'}\n\n` +
+      (sid ? `可以调 watch_frame({sheetId:"${sid}"}) 看一眼。\n` : '') +
+      '**这一轮只更新你的理解，不要输出任何文字，不要评价，不要提问。** ' +
+      '直接结束这一轮即可；需要开口时系统会另外叫你。'
+    try {
+      await send(prompt)
+    } catch (e) {
+      log(`静默观察发送失败：${e?.message ?? e}`)
+      return { ok: false, reason: 'send-failed' }
+    }
+    return { ok: true }
+  }
+
   function feed(event) {
     if (!event || typeof event !== 'object') return
     events.push({ ...event, at: typeof event.at === 'number' ? event.at : now() })
@@ -182,6 +212,7 @@ export function createWaker({
   return {
     feed,
     maybeWake,
+    observe,
     reset,
     get state() {
       return { misses, exhausted, lastWakeAt, buffered: events.length }

@@ -15,7 +15,8 @@ export const DEFAULTS = Object.freeze({
   speech: true,
   speechPerMin: 6, // 每分钟最多几条语音转写进事件队列；0 = 不限（关闭这条限制）
   // 唤醒节奏（对齐 see-now，但节奏用秒数直接填，比三档更好控制）
-  wakeGapSec: 30, // 两次主动说话的最小间隔（秒），0–300；**0 = 不说话，只采集**
+  wakeGapSec: 30,
+  observeSec: 0, // 静默观察轮：每隔几秒叫醒它"只看不说"；0 = 关闭 // 两次主动说话的最小间隔（秒），0–300；**0 = 不说话，只采集**
   idleStopMin: 3, // 多久没人调工具就收工（分钟）；0 = 不因空闲收工
   // 陪聊提示词。{n} 会被替换成「主动说话间隔」的秒数。
   // 唯一来源在 src/wake.mjs：两份文案会漂，而模型只看到发出去的那一份
@@ -55,6 +56,12 @@ export function validate(patch, current = DEFAULTS) {
         else if (raw.length > 600) reject(key, '太长了（最多 600 字），模型会当成正文去读')
         else value.commentPrompt = raw
         break
+      case 'observeSec': {
+        const n = Number(raw)
+        if (!Number.isInteger(n) || n < 0 || n > 120) reject(key, '必须是 0–120 的整数（秒；0 = 关闭静默观察）')
+        else value.observeSec = n
+        break
+      }
       case 'wakeGapSec': {
         const n = Number(raw)
         if (!Number.isInteger(n) || n < 0 || n > 300) reject(key, '必须是 0–300 的整数（秒；0 = 不说话）')
