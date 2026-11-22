@@ -10,6 +10,10 @@ const RUN_DIR = path.resolve('.scratch', 'run', 'frames')
 const KEEP_FRAMES = 120
 let sincePrune = 0
 
+// 平时上传的图宽。798 是采集宽度；缩到 640 后模型侧处理明显轻，
+// 而 640×360 认人脸/场景足够。要读小字时 watch_frame 传 hd:true。
+const UPLOAD_MAX_W = 640
+
 function pruneFrames(dir) {
   sincePrune += 1
   if (sincePrune % 10 !== 0) return // 每写 10 张才扫一次目录
@@ -135,15 +139,23 @@ export function createTools({ service, listWindows, attachments = null, outDir =
       parameters: {
         live: { type: 'boolean', description: 'true = 现在就抓一张（默认 true）' },
         sheetId: { type: 'string', description: '取事件里带的那张拼图；给了就不重新抓屏' },
+        hd: { type: 'boolean', description: '要原尺寸（798×450）。默认给 640 宽的缩图，只是为了省时间；看不清小字/表情时再开' },
         lastSec: { type: 'number', description: '附带最近 N 秒的字幕/听写，默认 10（每次多带 1 秒就多几十个 token，按需调大）' },
       },
       async execute(args = {}) {
-        const shot = await service.frame({ live: args.live !== false, sheetId: args.sheetId ?? null })
+        // 默认上传 640 宽：模型看图的时间跟像素走，而 640 已经够认人脸和场景；
+        // 要读小字（门牌、短信、弹幕）时传 hd:true 拿原尺寸。磁盘上始终存全尺寸。
+        const shot = await service.frame({
+          live: args.live !== false,
+          sheetId: args.sheetId ?? null,
+          maxWidth: args.hd ? 0 : UPLOAD_MAX_W,
+        })
         // **一次调用给全**：图 + 最近 N 秒的字幕与听写。
         // 只给图的话，模型看得到画面、读不到台词；只给文字则相反，两边都残。
         const recent = await recentSnapshot(args.lastSec)
         seq += 1
-        const file = savePng(shot, seq, outDir)
+        // 落盘存全尺寸（回看要用）；图片本身走缩图那份。
+        const file = savePng({ png: shot.pngFull ?? shot.png }, seq, outDir)
         const { ref, via, attachmentError } = await deliver(shot.png, `watch-along-${seq}.png`)
         // 记一笔"它真的看了"：唤醒那边靠这个时间戳决定"要不要催它看图"。
         try {
@@ -154,6 +166,8 @@ export function createTools({ service, listWindows, attachments = null, outDir =
         return {
           width: shot.width,
           height: shot.height,
+          hd: !!args.hd,
+          fullSize: shot.fullWidth ? `${shot.fullWidth}×${shot.fullHeight}` : null,
           t: shot.t,
           at: shot.at ?? null,
           cached: shot.cached === true,

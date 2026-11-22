@@ -29,8 +29,23 @@ function tinyPng() {
 }
 
 const fakeService = {
-  async frame() {
-    return { png: tinyPng(), width: 1, height: 1, t: 1, at: Date.now(), cached: false }
+  async frame(args = {}) {
+    // 模拟"给了 maxWidth 就回缩图、全尺寸另给一份"，跟真实 service.frame 一致
+    const maxWidth = Number(args.maxWidth) || 0
+    if (maxWidth > 0 && maxWidth < 798) {
+      return {
+        png: tinyPng(),
+        pngFull: tinyPng(),
+        width: maxWidth,
+        height: Math.round((450 * maxWidth) / 798),
+        fullWidth: 798,
+        fullHeight: 450,
+        t: 1,
+        at: Date.now(),
+        cached: false,
+      }
+    }
+    return { png: tinyPng(), pngFull: tinyPng(), width: 1, height: 1, fullWidth: 1, fullHeight: 1, t: 1, at: Date.now(), cached: false }
   },
   async events() {
     return {
@@ -75,4 +90,21 @@ test('watch_events 返回最新拼图编号', async () => {
   const evTool = tools.find((t) => t.name === 'watch_events')
   const out = await evTool.execute({})
   assert.equal(out.latestSheetId, 'S1')
+})
+
+test('默认上传缩图（640），hd:true 才给原尺寸', async () => {
+  const tools = createTools({
+    service: fakeService,
+    listWindows: async () => [],
+    outDir: path.join(os.tmpdir(), 'wa-tools-test'),
+  })
+  const frameTool = tools.find((t) => t.name === 'watch_frame')
+  const small = await frameTool.execute({})
+  assert.equal(small.width, 640, '默认没走缩图')
+  assert.equal(small.fullSize, '798×450', '要告诉模型原尺寸是多少')
+  assert.equal(small.hd, false)
+
+  const hd = await frameTool.execute({ hd: true })
+  assert.equal(hd.hd, true)
+  assert.equal(hd.width, 1, 'hd 应该拿原尺寸（假服务原尺寸是 1×1）')
 })

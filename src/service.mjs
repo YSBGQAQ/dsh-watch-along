@@ -5,6 +5,7 @@
 import { createEventQueue } from './events.mjs'
 import { composeGrid, pickEvenly } from './compose-sheet.mjs'
 import { createSessionStats } from './session-stats.mjs'
+import { shrink } from './scale.mjs'
 import { randomBytes } from 'node:crypto'
 
 const DEFAULT_SIZE = { width: 798, height: 450 }
@@ -303,7 +304,7 @@ export function createWatchService({
    * `live: true` 会等一个「调用之后才到达」的帧 —— 否则拿到的可能是几百毫秒前的旧帧。
    * `live: false` 用手上最新的帧，立即返回。
    */
-  async function frame({ sheetId = null, live = false, timeoutMs = 3000 } = {}) {
+  async function frame({ sheetId = null, live = false, timeoutMs = 3000, maxWidth = 0 } = {}) {
     if (sheetId) {
       const hit = sheetStore.get(sheetId)
       if (!hit) throw new Error(`没有这张拼图：${sheetId}（只留最近 ${SHEET_KEEP} 张）`)
@@ -330,7 +331,23 @@ export function createWatchService({
     const { width, height } = capture.params
     // t = 相对采集开始的秒数；at = 墙上时间(epoch ms)。两个都要：前者对齐音频，
     // 后者跨进程可读（见 ADR 0003 关于时间码的决定）。
-    return { png: encode({ width, height, rgb: buf }), width, height, t, at }
+    const pngFull = encode({ width, height, rgb: buf })
+    // 平时上传用低清：模型处理一张 798×450 的图要多花时间，而看不清的细节它本来也读不到。
+    // 全尺寸那份**同时返回**（pngFull），落盘留着"回看高清"。
+    if (maxWidth > 0 && width > maxWidth) {
+      const small = shrink({ width, height, rgb: buf }, maxWidth)
+      return {
+        png: encode(small),
+        pngFull,
+        width: small.width,
+        height: small.height,
+        fullWidth: width,
+        fullHeight: height,
+        t,
+        at,
+      }
+    }
+    return { png: pngFull, pngFull, width, height, fullWidth: width, fullHeight: height, t, at }
   }
 
   /**
