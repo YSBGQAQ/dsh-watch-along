@@ -5,16 +5,18 @@
 
 **Blocked by:** 12（先证明现有采集可用，再换）
 
-**Status:** claimed（采集已实现、真机验通链路；「只录该进程、不含提示音」与「杀进程回退」两条验收仍待人耳对照）
+**Status:** resolved（2026-11-22 两条人工验收均通过，见 Comments；设置项接线缺口另记）
 
 参考：`vendor/dsh-see-now-main/examples/floating-chat/procloopback.py`（纯 ctypes，无新依赖）
 
 - [x] 默认行为不变：整机环回 —— `_capture_device()` 原样保留，默认来源仍是 `system`；`_resolve_audio_source('system')` 有测试守着
 - [x] 设置项 `audioSource`: `system`（默认）/ `process:<pid|名字>`，非法值拒收
-- [ ] 指定进程后，录到的只有该进程输出（验证：放视频 + 同时响一声系统提示音，提示音不应出现）
-  —— 链路已通（见下「实施 2026-11-22」），但"只录该进程、不含提示音"这条**必须人耳对照**，机器验不了
-- [ ] 进程退出后自动回退到整机环回，并写一条日志
-  —— 实现已就位（`_capture_loop` 捕获 `TargetGone`/`OSError` → 打日志 → 走整机），但没真机杀过进程
+- [x] 指定进程后，录到的只有该进程输出（验证：放视频 + 同时响一声系统提示音，提示音不应出现）
+  —— 2026-11-22 用**受控双音源**验：目标进程播 440Hz、另一独立进程播 1200Hz，抓到的 3 秒里
+  `440Hz 幅度 2392.6 / 1200Hz 幅度 0.0`，**干扰一份都没进来**（比值 665754:1）
+- [x] 进程退出后自动回退到整机环回，并写一条日志
+  —— 杀掉目标后立刻打出 `[asr] 进程回环中断（TargetGone: 目标进程 N 已经不在了），已回退整机混音`，
+  `device` 从 `进程 python.exe(N)` 变回扬声器名，`source_note` 同步可见（`/health` 的 `audioNote`）
 - [x] 现在就是降级状态：设了 `process:` 会**明确打一行日志**再回退整机（不静默）
 
 ## 为什么值得做
@@ -74,3 +76,24 @@ set WATCH_ALONG_AUDIO_SOURCE=process:ego
 审查指出但**没改**的（属判断题，记在这里）：`ProcessLoopback` 的 `channels/bits`
 从未传过非默认值（Speculative Generality）；`read()` 把所有非 `S_OK` 都当
 `TargetGone`，其实"设备被占"和"目标退出"该分开（行为上都是回退，只是日志措辞会误报）。
+
+### 2026-11-22 两条人工验收通过（`accept17.py`，可重跑）
+
+不用人耳对照，也不用等微信提示音 —— 用**受控双音源**把「排除」变成可测的数字：
+
+- 起两个**独立进程**各播一个纯音：目标 440Hz、干扰 1200Hz（先响干扰，确认它不会因为先到而被选中）
+- `WATCH_ALONG_AUDIO_SOURCE=process:<目标 pid>`，跑 `_capture_loop`，8 秒后取最近 3 秒做 FFT
+
+结果：
+
+| 项 | 数字 |
+|---|---|
+| 440Hz（目标）幅度 | **2392.6** |
+| 1200Hz（干扰）幅度 | **0.0** |
+| 比值 | 665754 : 1 |
+
+杀掉目标后：立即打出 `进程回环中断（TargetGone: …），已回退整机混音`，`device` 变回扬声器名，
+`source_note` 与 `/health` 的 `audioNote` 同步可见，随后整机路径正常开始录音。
+
+**顺带印证了 COM 那个修复**：回退后 `soundcard` 能正常起来（打出了「开始连续录音」）。
+修之前那条路径会因为 `_co_uninitialize` 把 STA 计数清零而拿到 `CO_E_NOTINITIALIZED`。
