@@ -133,6 +133,10 @@ export function createWaker({
       }
     })()
     const maxT = events.reduce((m, e) => (typeof e.t === 'number' && e.t > m ? e.t : m), 0)
+    // **必须有上限**：万一模型落后很久，fresh 会把积压全带上，
+    // 一条消息从几百字节涨到几万字节，反而拖慢它 —— 那才是恶性循环。
+    const MAX_EVENTS = 12
+    const shown = fresh.slice(-MAX_EVENTS)
     // **JSON 而不是散文**：模型读字段比读句子稳，prompt 也单独成字段，
     // 不会被当成"对这一帧的感叹"。
     const payload = {
@@ -141,10 +145,12 @@ export function createWaker({
       elapsedSec: Math.round(maxT * 10) / 10,
       windowSec: composeSec,
       image: sid ?? null,
-      changes: fresh.length ? fresh.map(packEvent) : [{ note: `这 ${composeSec} 秒没有新变化` }],
+      ...(fresh.length > MAX_EVENTS ? { omitted: fresh.length - MAX_EVENTS } : {}),
+      changes: shown.length ? shown.map(packEvent) : [{ note: `这 ${composeSec} 秒没有新变化` }],
       prompt: '用一句话总结所有有用信息，直接输出到一个代码块里。',
     }
-    const prompt = JSON.stringify(payload, null, 1)
+    // **紧凑序列化**（不缩进）：缩进约占 25%，而模型不在乎好看。
+    const prompt = JSON.stringify(payload)
     try {
       await send(prompt)
     } catch (e) {
@@ -220,7 +226,7 @@ export function createWaker({
       events: picked.map(packEvent),
       prompt: renderPrompt(promptTemplate, gapSec),
     }
-    const prompt = JSON.stringify(payload, null, 1)
+    const prompt = JSON.stringify(payload)
     try {
       await send(prompt)
     } catch (e) {

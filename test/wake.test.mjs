@@ -306,3 +306,24 @@ test('observe() 只发增量，不重复整段摘要', async () => {
   assert.match(sent[0], /新台词/)
   assert.doesNotMatch(sent[0], /旧事件/, '把上一轮已经发过的事件又发了一遍')
 })
+
+// ── 体量上限：落后时不能把积压全带上 ─────────────────────
+test('观察轮最多带 12 条，多出来的只报数量', async () => {
+  const sent = []
+  const w = createWaker({ enabled: true, gapSec: 30, promptTemplate: '规则', send: async (t) => sent.push(t) })
+  const now = Date.now()
+  for (let i = 0; i < 30; i++) w.feed({ kind: 'ocr', text: `第${i}句`, t: i, at: now - 2000 + i * 50 })
+  await w.observe()
+  const j = JSON.parse(sent[0])
+  assert.equal(j.changes.length, 12)
+  assert.equal(j.omitted, 18)
+  assert.equal(j.changes.at(-1).text, '第29句', '应该保留最新的，丢弃最旧的')
+})
+
+test('JSON 是紧凑的（不缩进），省掉约四分之一字节', async () => {
+  const sent = []
+  const w = createWaker({ enabled: true, gapSec: 30, promptTemplate: '规则', sheetId: () => 'S1', send: async (t) => sent.push(t) })
+  w.feed({ kind: 'ocr', text: '别开窗', at: Date.now() })
+  await w.observe()
+  assert.ok(!sent[0].includes('\n'), '还在缩进，白白多占 25% 体积')
+})
