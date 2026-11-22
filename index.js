@@ -15,7 +15,7 @@ import { createWaker } from './src/wake.mjs'
 import { deliverToAgent } from './src/agent-delivery.mjs'
 import { createWatchLoop } from './src/watch-loop.mjs'
 import { createSupervisor } from './src/service-supervisor.mjs'
-import { loadSettings, PACES } from './src/settings.mjs'
+import { loadSettings } from './src/settings.mjs'
 import { createRateLimit } from './src/rate-limit.mjs'
 import crypto from 'node:crypto'
 import { defineToolCompat } from './vendor/dsh-see-now-main/src/define-tool.js'
@@ -317,12 +317,12 @@ export function apply(ctx, opts = {}) {
   const sessionsOf = (c) => safe(() => c.get?.('sessions') ?? null, null)
 
   // 陪看循环：本地每 2 秒算一次，30 秒最多叫一次；没人接就不再叫（等下一次工具调用）。
-    // 三项节奏从设置读（对齐 see-now 的 defaultPace / maxAutonomousWakes / idleStopMin）。
+    // 三项节奏从设置读（对齐 see-now 的节奏 / maxAutonomousWakes / idleStopMin）。
     // idleStopMin = 0 表示"不因空闲收工"，这里换算成 Infinity 交给循环。
     const idleMin = cur.idleStopMin ?? 3
     watchLoop = createWatchLoop({
       log: both,
-      gapMs: (PACES[cur.wakePace] ?? 30) * 1000,
+      gapMs: (cur.wakeGapSec ?? 30) * 1000,
       maxWakes: cur.maxWakes ?? 8,
       idleMs: idleMin === 0 ? Number.POSITIVE_INFINITY : idleMin * 60_000,
       everyMs: 2_000,

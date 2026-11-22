@@ -12,9 +12,9 @@ export const DEFAULTS = Object.freeze({
   subtitle: true,
   speech: true,
   speechPerMin: 6,
-  // 唤醒节奏（对齐 see-now 的 defaultPace / maxAutonomousWakes / idleStopMin）
-  wakePace: 'calm', // calm 30s / normal 15s / dense 8s
-  maxWakes: 8, // 一次陪看最多主动说几次，1–200
+  // 唤醒节奏（对齐 see-now，但节奏用秒数直接填，比三档更好控制）
+  wakeGapSec: 30, // 两次主动说话的最小间隔（秒），5–300
+  maxWakes: 0, // 一场陪看最多主动说几次；0 = 不限（只受间隔与空闲收工约束）
   idleStopMin: 3, // 多久没人调工具就收工（分钟）；0 = 不因空闲收工
 
   host: '0.0.0.0',
@@ -25,9 +25,6 @@ export const DEFAULTS = Object.freeze({
 })
 
 /** 三个预设。数值来自 spec 的场景表。 */
-/** 唤醒节奏三档，秒数与 see-now 的 PACES 一致（calm 30 / normal 15 / dense 8）。 */
-export const PACES = Object.freeze({ calm: 30, normal: 15, dense: 8 })
-
 export const PRESETS = Object.freeze({
   game: { quality: 'high', fps: 12, density: 'dense', speechPerMin: 4 },
   lecture: { quality: 'medium', fps: 8, density: 'normal', speechPerMin: 6 },
@@ -60,13 +57,15 @@ export function validate(patch, current = DEFAULTS) {
           Object.assign(value, PRESETS[raw])
         }
         break
-      case 'wakePace':
-        if (!PACES[raw]) reject(key, `只能是 ${Object.keys(PACES).join(' / ')}`)
-        else value.wakePace = raw
+      case 'wakeGapSec': {
+        const n = Number(raw)
+        if (!Number.isInteger(n) || n < 5 || n > 300) reject(key, '必须是 5–300 的整数（秒）')
+        else value.wakeGapSec = n
         break
+      }
       case 'maxWakes': {
         const n = Number(raw)
-        if (!Number.isInteger(n) || n < 1 || n > 200) reject(key, '必须是 1–200 的整数')
+        if (!Number.isInteger(n) || n < 0 || n > 999) reject(key, '必须是 0–999 的整数（0 = 不限）')
         else value.maxWakes = n
         break
       }

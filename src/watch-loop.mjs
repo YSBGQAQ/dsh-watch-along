@@ -55,9 +55,10 @@ export function createWatchLoop({
   function noteActivity() {
     lastAckAt = now()
     inFlight = false
-    // 注意：**不清零 wakes**。wakes 是"这一场总共叫了多少次"的硬上限；
-    // 清零会让"用户在跟它聊天"变成"永远不封顶"，而每叫一次都是一轮模型开销。
-    // "没人理"这件事由 idleMs 管（3 分钟没有任何工具调用就收工）。
+    // 不清零：maxWakes 是"这一场总共最多主动说几次"（0 = 不限）。
+    // 为什么不做"连续 N 次没人接"：inFlight 已经保证了——没被接住就不会叫下一条，
+    // 所以"连续 N 次没人接"永远到不了 1 以上，那个参数是死代码（2026-11-22 被测试抓到）。
+    // "没人理"由 idleMs 管：3 分钟没有任何工具调用就收工。
   }
 
   /** 一次判定。返回 {fired, reason}；测试直接调它，不用等定时器。 */
@@ -85,7 +86,7 @@ export function createWatchLoop({
     }
     lastWakeAt = now()
     wakes += 1
-    if (wakes >= maxWakes) stop('max-wakes')
+    if (maxWakes > 0 && wakes >= maxWakes) stop('max-wakes') // 0 = 不限
     return { fired: true, reason: 'woke', via: r.via, flushed: r.flushed }
   }
 
