@@ -142,3 +142,14 @@ test('没有次数上限：有人接就一直能叫（收工只由 idle 决定�
   assert.equal(h.loop.state.stopped, null)
   assert.equal(h.woke.length, 50)
 })
+
+test('循环还活着时 restart 不重置节奏（否则 30 秒会退化成 6 秒）', async () => {
+  const h = harness()
+  h.loop.start() // 生产里 start() 由 watch_start 触发；restart 的"活着"判据依赖它
+  await h.loop.tick() // 叫一次，记下 lastWakeAt
+  h.advance(10_000)
+  h.loop.restart() // 模型又调了一次 watch_start
+  const r = await h.loop.tick() // 才过 10 秒
+  assert.equal(r.fired, false)
+  assert.equal(r.reason, 'too-soon', 'restart 把间隔清掉了 —— 每轮 watch_start 都会让它立刻再叫一次')
+})

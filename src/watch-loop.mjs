@@ -104,6 +104,13 @@ export function createWatchLoop({
 
   /** 重新起跑：新一次 watch_start 时调，把"收工"和计数全部复位。 */
   function restart() {
+    // 循环还活着就**什么都别重置**：模型可能每轮都调一次 watch_start，
+    // 每次都清零 lastWakeAt、放开 inFlight，30 秒间隔会立刻失效
+    // （实测退化成 6 秒一次，同一毫秒还出现两条重复投递）。
+    if (started && !stopped) {
+      noteActivity()
+      return true
+    }
     if (timer) {
       clearTimer(timer)
       timer = null

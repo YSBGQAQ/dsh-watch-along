@@ -105,15 +105,24 @@ export function createTools({ service, listWindows, attachments = null, outDir =
     {
       name: 'watch_events',
       description:
-        '读画面/字幕/声音的事件流，**带时间**。\n' +
-        '问"刚才/最近 N 秒"时用 lastSec（例如 lastSec: 10 取最近 10 秒）；续读用 sinceId。',
+        '读画面/字幕/声音的事件流，**带时间**，**取一次就返回**。\n' +
+        '问"刚才/最近 N 秒"用 lastSec（例如 lastSec: 10）；续读用 sinceId。\n' +
+        '不要连着调它来"盯着"：那会让每一轮都产出一条回复、token 成倍涨。' +
+        '要持续陪看时，取一次、说完就结束这一轮 —— 新变化会推送给你。',
       parameters: {
         sinceId: { type: 'number', description: '上次收到的 nextId，首次不传' },
-        wait: { type: 'number', description: '长轮询最多等几秒，默认 20' },
+        wait: {
+          type: 'number',
+          description:
+            '长轮询最多等几秒，**默认 0 = 立刻返回**。一般不要填：连续长轮询会让每一轮都产出一次回复，' +
+            'token 会成倍涨。想看新变化就等系统的推送，或隔一会儿再取一次。',
+        },
         lastSec: { type: 'number', description: '只要最近 N 秒的事件（回答"刚才说了什么"用它）' },
       },
       async execute(args = {}) {
-        const waitSec = Number.isFinite(args.wait) ? Math.max(0, args.wait) : 20
+        // 默认 0：长轮询会让模型「每有动静就回一句」地自转起来
+        // （实测 3 分钟 70 多轮、每轮 32K token）
+        const waitSec = Number.isFinite(args.wait) ? Math.max(0, args.wait) : 0
         return service.events({
           sinceId: Number.isFinite(args.sinceId) ? args.sinceId : null,
           waitMs: Math.round(waitSec * 1000),
