@@ -123,6 +123,22 @@ export function handleSettings({ file, method = 'GET', body = null } = {}) {
   return { status: 405, body: { ok: false, error: 'method not allowed' } }
 }
 
+/**
+ * 选解释器：有 pythonw.exe 就用它。
+ * 为什么：python.exe 是控制台版，即使 spawn 时 windowsHide + detached，
+ * Windows 仍会给它开一个黑窗（用户每次启动服务都看到两个）。
+ * pythonw 不带控制台，输出本来也是 stdio:'ignore'，信息量一点没少。
+ */
+export function quietPython(python) {
+  try {
+    if (!/python\.exe$/i.test(String(python))) return python
+    const w = String(python).replace(/python\.exe$/i, 'pythonw.exe')
+    return fs.existsSync(w) ? w : python
+  } catch {
+    return python
+  }
+}
+
 export function createSupervisor({
   config,
   rootDir,
@@ -166,7 +182,8 @@ export function createSupervisor({
   function launch(which) {
     const script = path.join(cfg.rootDir, 'python', which === 'ocr' ? 'ocr_service.py' : 'asr_service.py')
     const port = which === 'ocr' ? cfg.ports.ocr : cfg.ports.asr
-    const child = spawnImpl(cfg.python, [script, '--port', String(port)], {
+    // pythonw：不起黑窗（见 quietPython 的注释）
+    const child = spawnImpl(quietPython(cfg.python), [script, '--port', String(port)], {
       cwd: cfg.rootDir,
       env: { ...process.env, WATCH_ALONG_WHISPER_DIR: cfg.whisperDir },
       detached: true, // 插件退出后服务继续活着：它是宿主之外的东西

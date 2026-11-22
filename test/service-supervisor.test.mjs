@@ -2,7 +2,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { resolveConfig, createSupervisor, DEFAULT_PORTS } from '../src/service-supervisor.mjs'
+import { resolveConfig, createSupervisor, DEFAULT_PORTS, quietPython } from '../src/service-supervisor.mjs'
 
 test('配置缺失要逐条列出缺什么，不能猜默认值', () => {
   const c = resolveConfig({}, { rootDir: '/repo' })
@@ -188,4 +188,33 @@ test('并发调用 start 只会拉起一份（面板轮询 + 用户连点也不�
   assert.equal(launched, 2, `起了 ${launched} 个进程（应为 2：ocr + asr 各一个）`)
   assert.equal(a.ok && b.ok && c.ok, true)
   assert.deepEqual(a.started, b.started, '并发调用应拿到同一份结果')
+})
+
+test('启动用 pythonw：有 pythonw.exe 就不起黑窗', async () => {
+  const { mkdtempSync, writeFileSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const dir = mkdtempSync(path.join(tmpdir(), 'wa-py-'))
+  const py = path.join(dir, 'python.exe')
+  writeFileSync(py, '')
+  writeFileSync(path.join(dir, 'pythonw.exe'), '')
+
+  const spawned = []
+  const sup = createSupervisor({
+    config: { ready: true, missing: [], ports: { ocr: 1, asr: 2, panel: 3 }, rootDir: dir, python: py, whisperDir: 'w' },
+    spawnImpl: (exe, args, opts) => {
+      spawned.push({ exe, args, opts })
+      return { pid: 123, unref() {} }
+    },
+    fetchImpl: async () => {
+      throw new Error('ECONNREFUSED')
+    },
+  })
+  await sup.start()
+  assert.match(spawned[0].exe, /pythonw\.exe$/, '应该换成 pythonw')
+  assert.equal(spawned[0].opts.windowsHide, true)
+})
+
+test('没有 pythonw.exe 就退回 python.exe，不能因为换解释器起不来', () => {
+  assert.equal(quietPython('/x/python.exe'), '/x/python.exe')
+  assert.equal(quietPython('C:/a/python.exe'), 'C:/a/python.exe')
 })
