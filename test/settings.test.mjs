@@ -78,8 +78,10 @@ test('speechPerMin 允许 0（= 不限制），31 拒', () => {
   assert.equal(validate({ speechPerMin: 2.5 }).ok, false)
 })
 
-test('陪聊风格只认三档', () => {
-  assert.equal(validate({ commentStyle: 'plot' }).value.commentStyle, 'plot')
-  assert.equal(validate({}).value.commentStyle, 'critic')
-  assert.equal(validate({ commentStyle: 'roast' }).ok, false)
+test('陪聊提示词：默认带 {n}，空串与超长都拒', () => {
+  assert.match(validate({}).value.commentPrompt, /\{n\}/, '默认提示词要有 {n} 占位')
+  assert.equal(validate({ commentPrompt: '随便聊两句' }).value.commentPrompt, '随便聊两句')
+  assert.equal(validate({ commentPrompt: '' }).ok, false)
+  assert.equal(validate({ commentPrompt: '   ' }).ok, false)
+  assert.equal(validate({ commentPrompt: 'x'.repeat(601) }).ok, false)
 })

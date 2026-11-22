@@ -43,31 +43,31 @@ export function buildSummary(events, { now, windowMs, max, format }) {
 }
 
 /**
- * 陪聊风格的指令文案。
+ * 陪聊提示词的默认值（设置里可改）。
  *
- * 这里就是"提示词"的全部 —— 模型收到的是一条 user 消息，看不到别的说明，
- * 所以角色、输出粒度、要不要调工具，都必须写在这几句里。
+ * `{n}` 会被替换成「主动说话间隔」的秒数 —— 让模型知道"过去多少秒"，
+ * 否则它会按自己想象的窗口评价。
+ *
+ * 为什么要写"沉浸式理解 / 有自己思考"：模型收到的只有这一条 user 消息，
+ * 不写角色与粒度，它就退化成逐帧复述（2026-11-22 实测三分钟七十多轮）。
  */
-export const STYLE_PROMPTS = Object.freeze({
-  critic:
-    '[陪看] 你是我一起看片的搭子，像个影评人那样聊。\n' +
-    '用 1–2 句话总结**刚才这一段**：发生了什么、有什么看点（铺垫/反转/镜头语言）。' +
-    '不要逐帧复述，也不要一句一条地碎碎念；不用调工具，除非我明确让你看细节。',
-  plot:
-    '[陪看] 你是我一起看片的搭子。\n' +
-    '用 1–2 句话把**刚才这一段**的剧情讲清楚：谁做了什么、推进到哪一步。' +
-    '不要逐帧复述；不用调工具。',
-  chat:
-    '[陪看] 你是我一起看片的搭子，像弹幕搭子那样聊。\n' +
-    '用 1–2 句话吐槽或捧场**刚才这一段**，语气随意。' +
-    '不要逐帧复述；不用调工具。',
-})
+export const DEFAULT_COMMENT_PROMPT =
+  '你是我一起看视频的搭子，你专业、健谈、同理心强。' +
+  '你必须沉浸式地理解内容，并对过去 {n} 秒的剧情做出评价；两三句话点到为止即可。' +
+  '不是简单陈述画面，而是有自己思考地对剧情提出见解、看法或疑问。'
+
+/** 把 {n} 换成实际秒数；模板里没写 {n} 也照样能用。 */
+export function renderPrompt(template, gapSec) {
+  const t = String(template ?? '').trim() || DEFAULT_COMMENT_PROMPT
+  return t.replace(/\{n\}/g, String(gapSec))
+}
 
 export function createWaker({
   send, // async (text: string) => void —— 真正往会话塞消息的那一步
   now = Date.now,
   minGapMs = 120_000,
-  style = 'critic', // critic | plot | chat，见 STYLE_PROMPTS
+  promptTemplate = DEFAULT_COMMENT_PROMPT, // 设置里的「陪聊提示词」
+  gapSec = 30, // 用于把模板里的 {n} 换成实际秒数
   maxMisses = 5,
   summaryWindowMs = 180_000,
   summaryMax = 20,
@@ -122,9 +122,10 @@ export function createWaker({
     // 这条文案就是"陪聊"的全部指令 —— 模型看不到别的说明。
     // 2026-11-22 之前的写法是「只说了这一句就够，别复述整段」，
     // 结果它真的每帧碎碎念一句（三分钟七十多轮），和"影评人式陪聊"正好相反。
+    const head = renderPrompt(promptTemplate, gapSec)
     const prompt = text
-      ? `${STYLE_PROMPTS[style] ?? STYLE_PROMPTS.critic}\n\n刚才这段时间屏幕上发生的：\n${text}`
-      : `${STYLE_PROMPTS[style] ?? STYLE_PROMPTS.critic}\n\n（这段时间没有可复述的新内容，安静陪着就好，不用开口。）`
+      ? `${head}\n\n过去 ${gapSec} 秒屏幕上发生的：\n${text}`
+      : `${head}\n\n（过去 ${gapSec} 秒没有可复述的新内容，安静陪着就好，不用开口。）`
     try {
       await send(prompt)
     } catch (e) {

@@ -307,7 +307,8 @@ export function apply(ctx, opts = {}) {
       // 节奏交给下面的 watchLoop 管（tick 每 2 秒一次），waker 只负责"说什么"。
       // 两边都设间隔会互相打架：0 表示不在这里节流。
       minGapMs: 0,
-      style: cur.commentStyle ?? 'critic',
+      promptTemplate: cur.commentPrompt,
+      gapSec: cur.wakeGapSec ?? 30,
       // send 失败只是这一拍没叫，不能影响陪看；waker 内部会捕获并记日志。
       // 投递走 agent.followup + sessions.flush（见 agent-delivery.mjs）。
       send: async (text) => {

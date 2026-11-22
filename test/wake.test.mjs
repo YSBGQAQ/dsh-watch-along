@@ -192,18 +192,18 @@ test('strength 的真实取值 high/medium/low 都要认对（medium 不许排�
   assert.equal(isTrigger({ kind: 'motion', strength: 'high', where: '50%,50%' }), true)
 })
 
-// ── 陪聊文案：这次翻车就翻在这几句上 ──────────────────────────────
-import { STYLE_PROMPTS } from '../src/wake.mjs'
+// ── 陪聊提示词：这次翻车就翻在这几句上 ──────────────────────────────
+import { DEFAULT_COMMENT_PROMPT, renderPrompt } from '../src/wake.mjs'
 
-test('唤醒文案要求"总结这一段"，不是"只说一句"', () => {
-  const p = STYLE_PROMPTS.critic
-  assert.match(p, /总结/)
-  assert.match(p, /1–2 句/)
-  assert.doesNotMatch(p, /只说了这一句就够/, '这句会把模型推成逐帧碎碎念')
+test('默认提示词是"评价剧情"，不是"只说一句"', () => {
+  assert.match(DEFAULT_COMMENT_PROMPT, /搭子/)
+  assert.match(DEFAULT_COMMENT_PROMPT, /评价/)
+  assert.match(DEFAULT_COMMENT_PROMPT, /见解|看法|疑问/)
+  assert.doesNotMatch(DEFAULT_COMMENT_PROMPT, /只说了这一句就够/)
 })
 
-test('三种风格文案互不相同，且都带"不要逐帧复述"', () => {
-  const all = Object.values(STYLE_PROMPTS)
-  assert.equal(new Set(all).size, 3)
-  for (const p of all) assert.match(p, /逐帧/)
+test('{n} 会被替换成实际秒数，且能换多次', () => {
+  assert.equal(renderPrompt('过去 {n} 秒，再看这 {n} 秒', 30), '过去 30 秒，再看这 30 秒')
+  assert.equal(renderPrompt('没有占位符', 15), '没有占位符')
+  assert.equal(renderPrompt('', 30), DEFAULT_COMMENT_PROMPT.replace(/\{n\}/g, '30'), '空模板要回默认值')
 })
