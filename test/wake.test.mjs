@@ -5,7 +5,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { createWaker, isTrigger, buildSummary, strengthRank, wherePhrase, worthTelling, packEvent } from '../src/wake.mjs'
+import { createWaker, isTrigger, buildSummary, strengthRank, wherePhrase, worthTelling, packEvent, observeFloor } from '../src/wake.mjs'
 
 /** 可控时钟 + 记录发送。 */
 function harness(opts = {}) {
@@ -507,4 +507,16 @@ test('同一秒同一类的几条合成一条（一帧读出的多行不是好�
     { now, windowMs: 60_000, max: 10, format: (e) => e.text },
   )
   assert.equal(s, '好像是吧；看不清')
+})
+
+test('观察节流下限：Infinity 必须当成 0，不能把通道卡死', () => {
+  // 2026-11-23 07:52 的真实事故：lastTurnMs 被写成 Infinity，floor 变 Infinity，
+  // 静默观察启动后就再也不发。这个用例就是钉住它。
+  assert.equal(observeFloor(6, Infinity), 6000)
+  assert.equal(observeFloor(6, Number.NaN), 6000)
+  assert.equal(observeFloor(6, undefined), 6000)
+  assert.equal(observeFloor(6, 20000), 20000, '真实轮时长要顶上来')
+  assert.equal(observeFloor(2, 0), 6000, '地板是 6 秒')
+  assert.equal(observeFloor(15, 0), 15000, '设置值大于地板时按设置来')
+  assert.equal(observeFloor(6, 999999), 120000, '异常大值要被夹住')
 })

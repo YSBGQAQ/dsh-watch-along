@@ -11,7 +11,7 @@ import { createPipeline } from './vendor/dsh-see-now-main/src/pipeline.js'
 import { createSubtitleReader } from './src/ocr.mjs'
 import { createSpeechReader } from './src/speech.mjs'
 import { createMobileServer } from './src/http.mjs'
-import { createWaker } from './src/wake.mjs'
+import { createWaker, observeFloor } from './src/wake.mjs'
 import { deliverToAgent } from './src/agent-delivery.mjs'
 import { createWatchLoop } from './src/watch-loop.mjs'
 import { createSupervisor } from './src/service-supervisor.mjs'
@@ -365,7 +365,6 @@ export function apply(ctx, opts = {}) {
   let observeSentAt = 0 // 上一条观察发出的时刻
   let observePending = false // 发出去还没等到"它动了"
   let lastTurnMs = 0 // 上一轮跑了多久（用来算下一轮最早什么时候能发）
-  let busySkips = 0 // 因为"它还在跑"而让路的次数（只用于日志取样）
 
   let lastSpeakAt = 0 // 上一次"允许说话"的投递时刻（兜底闸）
 
@@ -604,31 +603,19 @@ export function apply(ctx, opts = {}) {
       const obs = cur.observeSec ?? 0
       if (obs > 0) {
         observeTimer = setInterval(() => {
-          const since = observeSentAt ? Date.now() - observeSentAt : Infinity
-          // 最早什么时候能发下一条：设置值 与 上一轮实测耗时×1.3 取大，且不低于 6 秒。
+          // 最早什么时候能发下一条：设置值、上一轮实测耗时、6 秒，三者取大。
           // DSH 的消息是排队的，发得比模型跑得快，队列就会一直涨（实测 42 条）。
-          // **地板不低于 5 秒**：1 秒一条的实测结果是队列一直涨（用户看到 6 条积压）。
-          // 模型一轮要几秒，发得比它跑得快，只会越积越多 —— 这不是配置问题，是物理限制。
-          const floor = Math.max(obs * 1000, Math.round(lastTurnMs * 1.2), 5000)
+          // **不能用 Infinity 当"还没发过"**：一旦把 Infinity 记进 lastTurnMs，
+          // floor 就永远是 Infinity，静默观察从此再也不发 —— 2026-11-23 07:52
+          // 实测就是这么哑掉的（日志里"已等 Infinitys"，之后再无观察轮）。
+          const since = observeSentAt ? Date.now() - observeSentAt : 0
+          // 地板：设置值、上一次实测轮时长、6 秒，三者取大。
+          // 模型一轮 3–4 秒，6 秒发一条不会积压；1 秒一条实测会积到 42 条。
+          const floor = observeFloor(obs, lastTurnMs)
           if (since < floor) return
-          // 真实的背压：它还在跑上一轮，就别再往里塞。
-          // 以前靠"模型调没调工具"判断（noteToolCall），但图随消息走之后它常常一轮
-          // 一个工具都不调 —— 那个信号永远不来，节流退化成固定 5 秒，队列就一路涨
-          // （2026-11-23 实测：10 分钟积 6 条）。
-          const st = (() => {
-            try {
-              return String(lastAgent?.status ?? '')
-            } catch {
-              return ''
-            }
-          })()
-          if (st && st !== 'idle' && st !== 'ready') {
-            // 顺手把"这一轮到底跑了多久"记下来：下次的 floor 会跟着涨。
-            lastTurnMs = Math.max(since, 5000)
-            busySkips += 1
-            if (busySkips % 10 === 1) both(`静默观察让路：上一轮还没结束（status=${st}，已等 ${Math.round(since / 1000)}s）`)
-            return
-          }
+          // **不要拿 agent.status 当忙闲**：2026-11-23 实测它恒为 "running"
+          // （空闲时也是），拿它判"上一轮没结束"会把观察永久卡住。
+          // 回到纯时间闸门 —— 宁可偶尔多一条，也不能整条通道哑掉。
           if (observePending && since > 120_000) {
             both('静默观察：上一轮 120 秒无动静，视为已结束')
             observePending = false

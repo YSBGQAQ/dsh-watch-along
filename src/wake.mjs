@@ -447,3 +447,15 @@ export function createWaker({
 // 将来若真要给"给我讲讲刚才五分钟"这种问题用，可以拿它当基础。
 // 要重新启用，改这里的注释 + maybeWake 里那句 prompt，别只把 brief 加回去。
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * 静默观察的节流下限（毫秒）。
+ *
+ * 抽出来是为了能单测 —— 2026-11-23 踩过一次：`lastTurnMs` 被写成 Infinity，
+ * floor 跟着变成 Infinity，观察轮从此再不发（用户看到"启动后就不响应"）。
+ * **任何非有限值都必须当成 0**，宁可多发一条，也不能把整条通道卡死。
+ */
+export function observeFloor(obsSec, lastTurnMs) {
+  const turn = Number.isFinite(lastTurnMs) ? Math.min(Math.max(lastTurnMs, 0), 120_000) : 0
+  return Math.max((Number(obsSec) || 0) * 1000, turn, 6000)
+}
