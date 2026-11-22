@@ -377,6 +377,7 @@ export function apply(ctx, opts = {}) {
   const tools = createTools({
     service,
     listWindows,
+    serviceStatus: () => supervisor.status(),
     // 票 11：记住"谁开的陪看"。agent 句柄来自 watch_start 的 run context，
     // 不是靠 sessionController 反查 —— 宿主没把那个服务给插件（实测取不到）。
     onAgent: (agent) => {

@@ -12,8 +12,23 @@ function savePng(shot, seq, dir) {
   return file
 }
 
-export function createTools({ service, listWindows, attachments = null, outDir = RUN_DIR, onAgent = null }) {
+export function createTools({ service, listWindows, attachments = null, outDir = RUN_DIR, onAgent = null, serviceStatus = null }) {
   let seq = 0
+
+  /** 服务没起来时必须**说出来**：否则用户看到的是"AI 不听声音"，查半天才知道服务没开。 */
+  async function serviceWarnings() {
+    if (!serviceStatus) return []
+    try {
+      const st = await serviceStatus()
+      const down = (st?.services ?? []).filter((x) => !x.up).map((x) => x.name)
+      const out = []
+      if (down.length) out.push(`服务未启用：${down.join('、')}（设置页「陪看」里可以一键启动）`)
+      if (st && st.configured === false) out.push(`服务缺配置：${(st.missing ?? []).join('；')}`)
+      return out
+    } catch {
+      return []
+    }
+  }
 
   /** 有宿主附件服务就交图（AI 才能真的"看"）；没有就只给路径。 */
   async function deliver(png, name) {
@@ -52,7 +67,9 @@ export function createTools({ service, listWindows, attachments = null, outDir =
       // 不是靠猜出来的，就是这里抓到的那一个**。
       async execute(args = {}, run) {
         onAgent?.(run?.agent ?? null)
-        return service.start({ window: args.window })
+        const started = await service.start({ window: args.window })
+        const warnings = await serviceWarnings()
+        return warnings.length ? { ...started, warnings } : started
       },
     },
     {
@@ -103,7 +120,9 @@ export function createTools({ service, listWindows, attachments = null, outDir =
       description: '看当前状态：在盯哪个窗口、跑没跑、为什么失败。',
       parameters: {},
       async execute() {
-        return service.status()
+        const st = await service.status()
+        const warnings = await serviceWarnings()
+        return warnings.length ? { ...st, warnings } : st
       },
     },
     {
