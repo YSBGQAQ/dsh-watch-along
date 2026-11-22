@@ -12,7 +12,7 @@ function savePng(shot, seq, dir) {
   return file
 }
 
-export function createTools({ service, listWindows, attachments = null, outDir = RUN_DIR }) {
+export function createTools({ service, listWindows, attachments = null, outDir = RUN_DIR, onAgent = null }) {
   let seq = 0
 
   /** 有宿主附件服务就交图（AI 才能真的"看"）；没有就只给路径。 */
@@ -47,7 +47,11 @@ export function createTools({ service, listWindows, attachments = null, outDir =
       parameters: {
         window: { type: 'string', required: true, description: '窗口标题片段，例如「哔哩哔哩直播」' },
       },
-      async execute(args = {}) {
+      // 第二个参数是宿主的 ToolRunContext（`run.agent` 就是发起这次调用的 Agent）。
+      // 票 11 的主动唤醒全靠它：**"目标会话 = 最后一次 watch_start 的那个会话"
+      // 不是靠猜出来的，就是这里抓到的那一个**。
+      async execute(args = {}, run) {
+        onAgent?.(run?.agent ?? null)
         return service.start({ window: args.window })
       },
     },

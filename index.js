@@ -12,6 +12,7 @@ import { createSubtitleReader } from './src/ocr.mjs'
 import { createSpeechReader } from './src/speech.mjs'
 import { createMobileServer } from './src/http.mjs'
 import { createWaker } from './src/wake.mjs'
+import { deliverToAgent } from './src/agent-delivery.mjs'
 import crypto from 'node:crypto'
 import { defineToolCompat } from './vendor/dsh-see-now-main/src/define-tool.js'
 import http from 'node:http'
@@ -200,7 +201,16 @@ export function apply(ctx, opts = {}) {
     trace(m)
   }
 
-  const wakeEnabled = String(process.env.WATCH_ALONG_WAKE ?? '') === '1'
+  // 开关两种写法：环境变量（长期）或一个标记文件（临时试验用）。
+  // 为什么加文件：给 DSH 设环境变量要改系统设置并重登，试验一次不值当。
+  const wakeFlagFile = path.join(HERE, '.scratch', 'run', 'wake-on')
+  let wakeByFile = false
+  try {
+    wakeByFile = fs.existsSync(wakeFlagFile)
+  } catch {
+    /* 读不到就当没开 */
+  }
+  const wakeEnabled = String(process.env.WATCH_ALONG_WAKE ?? '') === '1' || wakeByFile
   const sessionCtl = (() => {
     try {
       return ctx.get?.('sessionController') ?? null
@@ -246,33 +256,27 @@ export function apply(ctx, opts = {}) {
   both(`宿主能力探测：${safe(() => JSON.stringify(probe), '(序列化失败)')}`)
   both(`插件 ctx 的自有键：${ctxKeys.slice(0, 60).join(',')}`)
 
-  async function targetSessionId() {
-    if (ctx.sessionId) return ctx.sessionId // 插件若被按会话实例化，这里直接就有
-    if (!sessionCtl?.list) return null
-    const rows = await sessionCtl.list({}, new AbortController().signal)
-    const arr = Array.isArray(rows) ? rows : (rows?.sessions ?? rows?.items ?? [])
-    const first = arr?.[0]
-    return first?.id ?? first?.sessionId ?? null
-  }
+  // "最后一次 watch_start 的那个会话" —— 直接是这次的 agent 句柄，不用反查。
+  let lastAgent = null
 
   let waker = null
-  if (wakeEnabled && sessionCtl) {
+  if (wakeEnabled) {
     waker = createWaker({
       enabled: true,
       log: both,
-      // 发不出去只是这一拍没叫，不能影响陪看；waker 内部会捕获并记日志
+      // send 失败只是这一拍没叫，不能影响陪看；waker 内部会捕获并记日志。
+      // 投递走 agent.steer（下一个 step 就交给模型），退 followup。
       send: async (text) => {
-        const sessionId = await targetSessionId()
-        if (!sessionId) throw new Error('拿不到会话 id（ctx.sessionId 与 sessionController.list() 都没给）')
-        await sessionCtl.prompt(
-          { sessionId, content: [{ type: 'text', text }] },
-          new AbortController().signal,
-        )
+        if (!lastAgent) throw new Error('还没绑定会话：先调用一次 watch_start')
+        const r = deliverToAgent(lastAgent, text)
+        if (!r.ok) throw new Error(`投递失败：${r.reason}`)
+        if (r.via !== 'steer') both(`唤醒退回 ${r.via}（${r.fallback ?? '宿主没有 steer'}）`)
       },
-      // 读会话历史那一步的字段形状还没在真机确认（票 11「两个未验的事实」第 2 条）。
+      // 读会话历史要 sessionController，而宿主没把它给插件（实测取不到）。
       // 传 null = waker 走保守分支：不计数，只保留主动唤醒、不自动停。
       hasUserMessageSince: null,
     })
+    both('主动唤醒已开启，等第一次 watch_start 绑定会话')
   }
 
   const service = createWatchService({
@@ -298,6 +302,13 @@ export function apply(ctx, opts = {}) {
   const tools = createTools({
     service,
     listWindows,
+    // 票 11：记住"谁开的陪看"。agent 句柄来自 watch_start 的 run context，
+    // 不是靠 sessionController 反查 —— 宿主没把那个服务给插件（实测取不到）。
+    onAgent: (agent) => {
+      if (!agent) return
+      lastAgent = agent
+      both(`主动唤醒已绑定会话：${safe(() => agent.session?.header?.id ?? agent.session?.id ?? '?', '?')}`)
+    },
     attachments: () => {
       try {
         return ctx.get?.('attachments') ?? null
