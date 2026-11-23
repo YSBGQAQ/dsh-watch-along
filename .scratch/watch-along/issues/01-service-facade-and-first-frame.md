@@ -4,7 +4,7 @@
 
 **Blocked by:** None（can start immediately）
 
-**Status:** ready-for-agent
+**Status:** closed（2026-11-23 实机验证：`watch_start` 返回 798×450 / 12fps，`watch_frame` 出图并进会话；清单未勾是状态没回写，功能一直在跑）
 
 - [x] `watch_windows` 能列出当前可见窗口的标题（DSH 内实测：21 个窗口，返回 `{count,titles}`）
 - [ ] `watch_start({window:"片段"})` 命中后返回确认信息（窗口矩形、采样帧率）

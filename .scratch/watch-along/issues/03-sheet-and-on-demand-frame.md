@@ -4,7 +4,7 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** closed（2026-11-23 实机验证：事件带 `sheetId`、`watch_frame({sheetId})` 返回 `cached: true`、`live: true` 立刻出新图；每轮拼图 100% 成功）
 
 - [ ] 有画面变化时 30 秒内至少产出一张拼图，事件里带 `sheetId`
 - [ ] 拼图尺寸与帧数符合档位逻辑（帧多则格子小，帧少则格子大）
