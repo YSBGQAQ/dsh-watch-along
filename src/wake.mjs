@@ -287,10 +287,9 @@ export function createWaker({
       mustSee: frameHint(sid),
       ...(fresh.length > MAX_EVENTS ? { omitted: fresh.length - MAX_EVENTS } : {}),
       events: shown.map(packEvent),
-      // **不要提"代码块"**：写"只输出这一个代码块"时，模型会理解成"你要回一段 JSON"，
-      // 于是每轮都吐 ```json {"summary":"…"} —— 聊天里多一层围栏，token 也多花。
-      // 2026-11-23 08:10 实测到这个问题。
-      prompt: '看这一帧，用一句话说清现在发生了什么。直接说话，不要代码块、不要 JSON、不要前缀。',
+      // 这段措辞是**用户定的**，别"优化"：观察轮的回答必须包在代码块里、
+      // 块外一个字都不写。2026-11-23 08:16 我把它改成"不要代码块"，被明确否掉。
+      prompt: '看这一帧，用简短的一句话总结有用信息，一行即可。**只输出这一个代码块，块外不要写任何文字。**',
     }
     // **紧凑序列化**（不缩进）：缩进约占 25%，而模型不在乎好看。
     const prompt = JSON.stringify(payload)

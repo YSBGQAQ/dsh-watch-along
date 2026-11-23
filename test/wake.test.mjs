@@ -533,3 +533,15 @@ test('shouldObserve：从没发过时必须立刻能发（08:06 那次一拍不�
   assert.equal(shouldObserve({ now: 1_010_000, lastSentAt: 1_000_000, obsSec: 6, lastTurnMs: 20_000 }), false)
   assert.equal(shouldObserve({ now: 1_020_000, lastSentAt: 1_000_000, obsSec: 6, lastTurnMs: 20_000 }), true)
 })
+
+test('观察轮的提示词必须是"代码块"那版（用户定的，别优化掉）', async () => {
+  const sent = []
+  const w = createWaker({ enabled: true, gapSec: 30, promptTemplate: '你是搭子', send: async (t) => sent.push(t) })
+  await w.observe()
+  const j = JSON.parse(sent[0])
+  assert.equal(
+    j.prompt,
+    '看这一帧，用简短的一句话总结有用信息，一行即可。**只输出这一个代码块，块外不要写任何文字。**',
+    '这句是用户明确要求的措辞，改了就是回归',
+  )
+})
