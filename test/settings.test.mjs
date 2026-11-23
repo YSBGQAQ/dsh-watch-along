@@ -97,3 +97,11 @@ test('传图档位：默认低清，三档之外的都拒', () => {
   assert.equal(bad.ok, false)
   assert.match(bad.rejected[0].reason, /none \/ low \/ high/)
 })
+
+test('静默观察低于 6 秒按 6 存（发得比模型快只会排队）', () => {
+  assert.equal(validate({ observeSec: 2 }).value.observeSec, 6, '2 秒应按 6 秒存')
+  assert.equal(validate({ observeSec: 6 }).value.observeSec, 6)
+  assert.equal(validate({ observeSec: 15 }).value.observeSec, 15, '大于 6 的原样保留')
+  assert.equal(validate({ observeSec: 0 }).value.observeSec, 0, '0 仍是关闭')
+  assert.equal(validate({ observeSec: -1 }).ok, false)
+})

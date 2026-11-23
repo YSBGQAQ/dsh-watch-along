@@ -310,12 +310,37 @@ export function createSupervisor({
         )
       })
     // 显卡：没有 NVIDIA 不是错（现在是 CPU 模式），只标黄
-    probes.driver = () =>
+    const gpuName = () =>
       new Promise((resolve) => {
         execFile('nvidia-smi', ['--query-gpu=name', '--format=csv,noheader'], { timeout: 4000, windowsHide: true }, (err, out) => {
-          if (err) return resolve({ ok: true, warn: true, detail: '没装 nvidia-smi（CPU 模式可跑，转写会慢些）' })
-          resolve({ ok: true, detail: String(out || '').trim().split('\n')[0] })
+          if (err) return resolve(null)
+          resolve(String(out || '').trim().split('\n')[0] || null)
         })
+      })
+    probes.driver = async () => {
+      const name = await gpuName()
+      return name
+        ? { ok: true, detail: name }
+        : { ok: true, warn: true, detail: '没有 NVIDIA 显卡，走 CPU（功能一样，转写慢些）' }
+    }
+    // CUDA：**真去加载一次 cublas**，不再写"未探测（稍后补）"——
+    // 那句话读起来像 bug（用户 2026-11-23 就问了）。加载不了也不是错，标黄说清原因。
+    probes.cuda = () =>
+      new Promise((resolve) => {
+        execFile(
+          cfg.python,
+          ['-c', 'import ctypes; ctypes.WinDLL("cublas64_12.dll")'],
+          { timeout: 8000, windowsHide: true },
+          async (err) => {
+            if (!err) return resolve({ ok: true, detail: 'cublas64_12.dll 能加载' })
+            const name = await gpuName()
+            resolve({
+              ok: true,
+              warn: true,
+              detail: name ? '有显卡，但 cublas 加载不了（多半没装 CUDA 运行时）' : '没有 NVIDIA 显卡，走 CPU（功能一样，转写慢些）',
+            })
+          },
+        )
       })
     probes.ffmpeg = () => {
       try {

@@ -63,8 +63,13 @@ export function validate(patch, current = DEFAULTS) {
         break
       case 'observeSec': {
         const n = Number(raw)
-        if (!Number.isInteger(n) || n < 0 || n > 120) reject(key, '必须是 0–120 的整数（秒；0 = 关闭，1 = 尽力而为的最高频）')
-        else value.observeSec = n
+        if (!Number.isInteger(n) || n < 0 || n > 120) {
+          reject(key, '必须是 0–120 的整数（秒；0 = 关闭）')
+          break
+        }
+        // 低于 6 秒没有意义：模型一轮 3–4 秒，发得比它跑得快只会排队。
+        // 用户填 2 也按 6 存 —— 与其让设置看着生效、实际排队，不如当场对齐。
+        value.observeSec = n === 0 ? 0 : Math.max(6, n)
         break
       }
       case 'wakeGapSec': {

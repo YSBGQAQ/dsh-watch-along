@@ -50,6 +50,49 @@ export function createTools({ service, listWindows, attachments = null, outDir =
    * 只给文字看不到画面，两边都残。
    */
   let latestSheetId = null
+
+  /**
+   * 取一张快照：图 + 最近 N 秒的字幕与听写。
+   *
+   * watch_start 与 watch_frame 共用。**开头那次必须也走这里** —— 以前 watch_start
+   * 只返回"开始成功"，模型还得再调一次 watch_frame，用户看到的就是开场连着四个
+   * 工具调用（status → windows → start → frame），十几秒才出第一句话。
+   */
+  async function takeSnapshot(args = {}) {
+    // 默认上传 640 宽：模型看图的时间跟像素走，而 640 已经够认人脸和场景；
+    // 要读小字（门牌、短信、弹幕）时传 hd:true 拿原尺寸。磁盘上始终存全尺寸。
+    const shot = await service.frame({
+      live: args.live !== false,
+      sheetId: args.sheetId ?? null,
+      maxWidth: args.hd ? 0 : uploadWidth,
+    })
+    const recent = await recentSnapshot(args.lastSec)
+    seq += 1
+    const file = savePng({ png: shot.pngFull ?? shot.png }, seq, outDir)
+    const { ref, via, attachmentError } = await deliver(shot.png, `watch-along-${seq}.png`)
+    // 记一笔"它真的看了"：唤醒那边靠这个时间戳决定"要不要催它看图"。
+    try {
+      onFrame?.({ seq, at: Date.now(), bytes: shot.png.length, via, ok: !attachmentError, file })
+    } catch {
+      /* 记账失败不能影响取帧 */
+    }
+    return {
+      width: shot.width,
+      height: shot.height,
+      hd: !!args.hd,
+      fullSize: shot.fullWidth ? `${shot.fullWidth}×${shot.fullHeight}` : null,
+      t: shot.t,
+      at: shot.at ?? null,
+      cached: shot.cached === true,
+      pngBytes: shot.png.length,
+      file,
+      ref,
+      via,
+      recent, // 同一时间窗内的字幕与听写，一次给全
+      ...(attachmentError ? { attachmentError } : {}),
+    }
+  }
+
   async function recentSnapshot(lastSec = 10) {
     const sec = Number.isFinite(lastSec) && lastSec > 0 ? lastSec : 10
     try {
@@ -112,7 +155,8 @@ export function createTools({ service, listWindows, attachments = null, outDir =
     {
       name: 'watch_start',
       description:
-        '开始陪看某个窗口：按标题片段找到窗口并起采集。找不到时会把可见窗口列出来。',
+        '开始陪看某个窗口：按标题片段找到窗口并起采集。\n' +
+        '**这一次调用就把第一张画面和最近 10 秒的字幕/听写一起给你了**，不要再接着调 watch_frame。',
       // 宿主 defineTool 要的是「属性表」（author spec），不是 JSON Schema：
       // 必填标在属性上，编译时会提升到父级 required 数组。写顶层 type:'object' 会被静默忽略。
       parameters: {
@@ -126,7 +170,16 @@ export function createTools({ service, listWindows, attachments = null, outDir =
         // 设置里的「窗口标题片段」当默认值：模型没给窗口时不用再问一句
         const started = await service.start({ window: args.window || defaultWindow || '' })
         const warnings = await serviceWarnings()
-        return warnings.length ? { ...started, warnings } : started
+        // **开场一次给全**：图 + 最近 10 秒的字幕/听写。
+        // 以前这里只返回"开始了"，模型还得追一次 watch_frame —— 用户看到的就是
+        // 开场连着四个工具调用（status → windows → start → frame），十几秒才出第一句。
+        let snap = {}
+        try {
+          snap = await takeSnapshot({ lastSec: 10 })
+        } catch (e) {
+          snap = { frameError: String(e?.message ?? e) }
+        }
+        return { ...started, ...(warnings.length ? { warnings } : {}), ...snap }
       },
     },
     {
@@ -143,41 +196,7 @@ export function createTools({ service, listWindows, attachments = null, outDir =
         lastSec: { type: 'number', description: '附带最近 N 秒的字幕/听写，默认 10（每次多带 1 秒就多几十个 token，按需调大）' },
       },
       async execute(args = {}) {
-        // 默认上传 640 宽：模型看图的时间跟像素走，而 640 已经够认人脸和场景；
-        // 要读小字（门牌、短信、弹幕）时传 hd:true 拿原尺寸。磁盘上始终存全尺寸。
-        const shot = await service.frame({
-          live: args.live !== false,
-          sheetId: args.sheetId ?? null,
-          maxWidth: args.hd ? 0 : uploadWidth,
-        })
-        // **一次调用给全**：图 + 最近 N 秒的字幕与听写。
-        // 只给图的话，模型看得到画面、读不到台词；只给文字则相反，两边都残。
-        const recent = await recentSnapshot(args.lastSec)
-        seq += 1
-        // 落盘存全尺寸（回看要用）；图片本身走缩图那份。
-        const file = savePng({ png: shot.pngFull ?? shot.png }, seq, outDir)
-        const { ref, via, attachmentError } = await deliver(shot.png, `watch-along-${seq}.png`)
-        // 记一笔"它真的看了"：唤醒那边靠这个时间戳决定"要不要催它看图"。
-        try {
-          onFrame?.({ seq, at: Date.now(), bytes: shot.png.length, via, ok: !attachmentError, file })
-        } catch {
-          /* 记账失败不能影响取帧 */
-        }
-        return {
-          width: shot.width,
-          height: shot.height,
-          hd: !!args.hd,
-          fullSize: shot.fullWidth ? `${shot.fullWidth}×${shot.fullHeight}` : null,
-          t: shot.t,
-          at: shot.at ?? null,
-          cached: shot.cached === true,
-          pngBytes: shot.png.length,
-          file,
-          ref,
-          via,
-          recent, // 同一时间窗内的字幕与听写，一次给全
-          ...(attachmentError ? { attachmentError } : {}),
-        }
+        return takeSnapshot(args)
       },
     },
     {
