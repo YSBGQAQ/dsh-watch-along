@@ -21,3 +21,6 @@ Thumbs.db
 
 # 参考代码解压目录（本地看，不进仓库；原 zip 在 Downloads）
 .scratch/ref/
+
+# 打包产物（node scripts/pack.mjs 生成）
+dist/

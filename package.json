@@ -30,6 +30,10 @@
   },
   "scripts": {
     "test": "node --test test/*.test.mjs",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "pack": "node scripts/pack.mjs"
+  },
+  "dependencies": {
+    "koffi": "^3.3.8"
   }
 }

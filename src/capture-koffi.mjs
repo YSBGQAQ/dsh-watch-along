@@ -28,7 +28,11 @@ const IsWindowVisible = user32.func('int IsWindowVisible(void* hwnd)')
 const GetWindowTextLengthW = user32.func('int GetWindowTextLengthW(void* hwnd)')
 const GetWindowTextW = user32.func('int GetWindowTextW(void* hwnd, _Out_ uint16* buf, int n)')
 const EnumWindows = user32.func('int EnumWindows(void* cb, intptr_t lParam)')
-const ENUMPROC = koffi.proto('int __stdcall EnumProc(void* hwnd, intptr_t lParam)')
+// 类型名必须**全局唯一**：vendor 里的 streamvision native.js 也注册了一个叫 EnumProc 的
+// 同名 proto。仓库里之所以没炸，是因为 vendor 自带一份 node_modules/koffi —— 两个实例各注册各的。
+// 打包分发时不会带 vendor 的 node_modules（也不该带，等于两套 FFI），于是两者共用同一个
+// koffi 实例，第二个注册直接抛 `Duplicate type name 'EnumProc'`（2026-11-23 打包时踩到）。
+const ENUMPROC = koffi.proto('int __stdcall WatchEnumProc(void* hwnd, intptr_t lParam)')
 
 const SRCCOPY = 0x00cc0020
 
