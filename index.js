@@ -11,7 +11,7 @@ import { createPipeline } from './vendor/dsh-see-now-main/src/pipeline.js'
 import { createSubtitleReader } from './src/ocr.mjs'
 import { createSpeechReader } from './src/speech.mjs'
 import { createMobileServer } from './src/http.mjs'
-import { createWaker, observeFloor } from './src/wake.mjs'
+import { createWaker, observeFloor, shouldObserve } from './src/wake.mjs'
 import { deliverToAgent } from './src/agent-delivery.mjs'
 import { createWatchLoop } from './src/watch-loop.mjs'
 import { createSupervisor } from './src/service-supervisor.mjs'
@@ -612,16 +612,12 @@ export function apply(ctx, opts = {}) {
       const obs = cur.observeSec ?? 0
       if (obs > 0) {
         observeTimer = setInterval(() => {
-          // 最早什么时候能发下一条：设置值、上一轮实测耗时、6 秒，三者取大。
-          // DSH 的消息是排队的，发得比模型跑得快，队列就会一直涨（实测 42 条）。
-          // **不能用 Infinity 当"还没发过"**：一旦把 Infinity 记进 lastTurnMs，
-          // floor 就永远是 Infinity，静默观察从此再也不发 —— 2026-11-23 07:52
-          // 实测就是这么哑掉的（日志里"已等 Infinitys"，之后再无观察轮）。
-          const since = observeSentAt ? Date.now() - observeSentAt : 0
-          // 地板：设置值、上一次实测轮时长、6 秒，三者取大。
-          // 模型一轮 3–4 秒，6 秒发一条不会积压；1 秒一条实测会积到 42 条。
-          const floor = observeFloor(obs, lastTurnMs)
-          if (since < floor) return
+          // 判定抽在 shouldObserve 里（可单测）：这里连续踩过两次"哨兵值"的坑 ——
+          // 一次把 Infinity 写进 lastTurnMs 地板永久卡死，一次用 0 当"没发过"导致
+          // 重启后一拍都不发。见 src/wake.mjs 的注释。
+          const now = Date.now()
+          if (!shouldObserve({ now, lastSentAt: observeSentAt, obsSec: obs, lastTurnMs })) return
+          const since = observeSentAt ? now - observeSentAt : Number.POSITIVE_INFINITY
           // **不要拿 agent.status 当忙闲**：2026-11-23 实测它恒为 "running"
           // （空闲时也是），拿它判"上一轮没结束"会把观察永久卡住。
           // 回到纯时间闸门 —— 宁可偶尔多一条，也不能整条通道哑掉。
@@ -631,10 +627,21 @@ export function apply(ctx, opts = {}) {
           }
           observePending = true
           observeSentAt = Date.now()
-          waker?.observe?.().catch?.((e) => {
-            observePending = false
-            both(`静默观察出错：${e?.message ?? e}`)
-          })
+          const sentAt = observeSentAt
+          Promise.resolve(waker?.observe?.())
+            .then((r) => {
+              // 没发出去（比如服务刚好停了）就退回"没发过"，下一拍立刻重试。
+              // 不退回的话 since 会从这次失败开始算，白白再等 6 秒。
+              if (r && r.ok === false) {
+                observePending = false
+                if (observeSentAt === sentAt) observeSentAt = 0
+              }
+            })
+            .catch((e) => {
+              observePending = false
+              if (observeSentAt === sentAt) observeSentAt = 0
+              both(`静默观察出错：${e?.message ?? e}`)
+            })
         }, Math.max(1000, Math.round(obs * 500)))
         try {
           observeTimer.unref?.()

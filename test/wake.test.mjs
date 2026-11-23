@@ -5,7 +5,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { createWaker, isTrigger, buildSummary, strengthRank, wherePhrase, worthTelling, packEvent, observeFloor } from '../src/wake.mjs'
+import { createWaker, isTrigger, buildSummary, strengthRank, wherePhrase, worthTelling, packEvent, observeFloor, shouldObserve } from '../src/wake.mjs'
 
 /** 可控时钟 + 记录发送。 */
 function harness(opts = {}) {
@@ -519,4 +519,17 @@ test('观察节流下限：Infinity 必须当成 0，不能把通道卡死', () 
   assert.equal(observeFloor(2, 0), 6000, '地板是 6 秒')
   assert.equal(observeFloor(15, 0), 15000, '设置值大于地板时按设置来')
   assert.equal(observeFloor(6, 999999), 60000, '异常大值要被夹住')
+})
+
+test('shouldObserve：从没发过时必须立刻能发（08:06 那次一拍不发的回归）', () => {
+  const base = { obsSec: 6, lastTurnMs: 0 }
+  // 从没发过：lastSentAt=0 → 立刻可以发
+  assert.equal(shouldObserve({ now: 1_000_000, lastSentAt: 0, ...base }), true, '从没发过却被挡住 = 整场哑掉')
+  // 刚发过：不到 6 秒不发
+  assert.equal(shouldObserve({ now: 1_002_000, lastSentAt: 1_000_000, ...base }), false)
+  // 过了 6 秒：发
+  assert.equal(shouldObserve({ now: 1_006_000, lastSentAt: 1_000_000, ...base }), true)
+  // 上一轮很慢（20 秒）：地板跟着涨
+  assert.equal(shouldObserve({ now: 1_010_000, lastSentAt: 1_000_000, obsSec: 6, lastTurnMs: 20_000 }), false)
+  assert.equal(shouldObserve({ now: 1_020_000, lastSentAt: 1_000_000, obsSec: 6, lastTurnMs: 20_000 }), true)
 })

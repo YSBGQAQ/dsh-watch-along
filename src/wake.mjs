@@ -459,3 +459,16 @@ export function observeFloor(obsSec, lastTurnMs) {
   const turn = Number.isFinite(lastTurnMs) ? Math.min(Math.max(lastTurnMs, 0), 60_000) : 0
   return Math.max((Number(obsSec) || 0) * 1000, turn, 6000)
 }
+
+/**
+ * 这一拍该不该发观察轮。
+ *
+ * 单独抽出来的原因：这里连续踩过两次坑，都是"哨兵值"选错 ——
+ *   ① lastSentAt=0 时用 Infinity 算时长，又把 Infinity 写进 lastTurnMs → 地板永久 Infinity；
+ *   ② 改成 0 当"还没发过"，结果 0 < 地板永远成立 → 重启后一次都不发。
+ * 正确语义只有一句：**没发过 = 很久以前 = 立刻可以发**，且这个 Infinity 只在本函数内用。
+ */
+export function shouldObserve({ now, lastSentAt, obsSec, lastTurnMs }) {
+  const since = lastSentAt ? now - lastSentAt : Number.POSITIVE_INFINITY
+  return since >= observeFloor(obsSec, lastTurnMs)
+}
