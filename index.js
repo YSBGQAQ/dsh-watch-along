@@ -361,6 +361,10 @@ export function apply(ctx, opts = {}) {
   // 拼图成败只在这里能数到（service 不知道是插件在定时拼图），汇总时一并报出去。
   let composeOk = 0
   let composeFail = 0
+  // 随消息附图成功/失败：以前只数工具取的帧（取帧 #N），消息附图完全没记账，
+  // 2026-11-23 08:10 那轮看着像"一整天只取了一帧"，其实是统计口径错了。
+  let attachOk = 0
+  let attachFail = 0
   let observeTimer = null // 静默观察轮的定时器（observeSec > 0 才有）
   let observeSentAt = 0 // 上一条观察发出的时刻
   let observePending = false // 发出去还没等到"它动了"
@@ -457,7 +461,12 @@ export function apply(ctx, opts = {}) {
         const r = deliverToAgent(lastAgent, text, { sessions: sessionsOf(ctx), images })
         if (!r.ok) throw new Error(`投递失败：${r.reason}`)
         // 图已经随消息送到，门闩不必再催它调工具。
-        if (images && !r.imageFallback) lastFrameAt = Date.now()
+        if (images && !r.imageFallback) {
+          lastFrameAt = Date.now()
+          attachOk += 1
+        } else if (images && r.imageFallback) {
+          attachFail += 1
+        }
         both(
           `唤醒投递 ${r.via}（flush=${r.flushed === null ? '没有 sessions 服务' : r.flushed}）` +
             `${images ? '＋图' : ''}${r.imageFallback ? '（图被拒，已退回文本）' : ''}` +
@@ -548,7 +557,7 @@ export function apply(ctx, opts = {}) {
       if (summary && summary.frames === 0 && summary.events === 0) {
         both('[会话汇总] 这一场没有采到帧（刚开就停？），不记数')
       } else {
-        const composeText = `拼图 ${composeOk + composeFail} 张（成功 ${composeOk} / 失败 ${composeFail}）`
+        const composeText = `拼图 ${composeOk + composeFail} 张（成功 ${composeOk} / 失败 ${composeFail}）｜附图 ${attachOk + attachFail}（成功 ${attachOk} / 退回文本 ${attachFail}）`
         both(formatSummary(summary, composeText))
       }
       composeOk = 0
@@ -565,6 +574,8 @@ export function apply(ctx, opts = {}) {
       observeSentAt = 0
       observePending = false
       lastTurnMs = 0
+      attachOk = 0
+      attachFail = 0
       // 每一场陪看换一个会话号，并让 ASR 下一拍 reset：清缓冲、时间原点归零、独立文件。
       // 以前 asrFirst 只在**进程生命周期**里重置一次，第二场开始 ASR 的时钟接着上一场跑
       // （2026-11-23 实测：31 分钟那轮整体偏了 88 秒，而且 31 分钟里又漂了 14%）。
@@ -663,7 +674,7 @@ export function apply(ctx, opts = {}) {
       if (snapshotTimer) clearInterval(snapshotTimer)
       snapshotTimer = setInterval(() => {
         const s = service.snapshot()
-        const composeText = `拼图 ${composeOk + composeFail} 张（成功 ${composeOk} / 失败 ${composeFail}）`
+        const composeText = `拼图 ${composeOk + composeFail} 张（成功 ${composeOk} / 失败 ${composeFail}）｜附图 ${attachOk + attachFail}（成功 ${attachOk} / 退回文本 ${attachFail}）`
         both(formatSummary(s, composeText, '会话快照 5min'))
       }, 5 * 60_000)
       try {
