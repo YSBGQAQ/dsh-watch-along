@@ -456,6 +456,6 @@ export function createWaker({
  * **任何非有限值都必须当成 0**，宁可多发一条，也不能把整条通道卡死。
  */
 export function observeFloor(obsSec, lastTurnMs) {
-  const turn = Number.isFinite(lastTurnMs) ? Math.min(Math.max(lastTurnMs, 0), 120_000) : 0
+  const turn = Number.isFinite(lastTurnMs) ? Math.min(Math.max(lastTurnMs, 0), 60_000) : 0
   return Math.max((Number(obsSec) || 0) * 1000, turn, 6000)
 }

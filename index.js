@@ -372,8 +372,10 @@ export function apply(ctx, opts = {}) {
   function noteToolCall() {
     // 记下这一轮实际跑了多久：观察轮的节流线要**跟着它走**。
     // 固定 2 秒是错的 —— 一轮要 5–8 秒时，2 秒一条只会排队（实测三分钟积了 42 条）。
-    if (observePending) {
-      lastTurnMs = Date.now() - observeSentAt
+    // 两处护栏（2026-11-23 08:01 踩过）：observeSentAt=0 时不能算（会得出几十万毫秒），
+    // 算出来的值也不能超过 60 秒 —— 那不是"这一轮慢"，是记账跨了场。
+    if (observePending && observeSentAt) {
+      lastTurnMs = Math.min(Math.max(Date.now() - observeSentAt, 0), 60_000)
       observePending = false
     }
     watchLoop?.noteActivity()
@@ -556,6 +558,13 @@ export function apply(ctx, opts = {}) {
       waker?.reset()
       composeOk = 0
       composeFail = 0
+      // **这三个必须跟着清**：它们是 index.js 的模块级状态，waker.reset() 管不到。
+      // 不清的后果（2026-11-23 08:01 实测）：上一场留下的 observePending=true +
+      // 旧的 observeSentAt，新一场第一次调工具就把它算成"上一轮跑了 6 分钟"，
+      // lastTurnMs 被夹到 120 秒，节流地板跟着变 120 秒 —— 整场一次观察都不发。
+      observeSentAt = 0
+      observePending = false
+      lastTurnMs = 0
       // 每一场陪看换一个会话号，并让 ASR 下一拍 reset：清缓冲、时间原点归零、独立文件。
       // 以前 asrFirst 只在**进程生命周期**里重置一次，第二场开始 ASR 的时钟接着上一场跑
       // （2026-11-23 实测：31 分钟那轮整体偏了 88 秒，而且 31 分钟里又漂了 14%）。
