@@ -113,5 +113,7 @@ node scripts\check-transcript.mjs <字幕.json> 0 300  :: 转写与字幕对照
 
 设计文档在 `docs/`（含 ADR 与面板契约侦察记录），票在 `.scratch/watch-along/issues/`。
 
+**分发相关**：安装步骤 [`docs/install.md`](docs/install.md)、环境包 [`docs/env-package.md`](docs/env-package.md)。
+
 **实测数据在 [`docs/benchmarks.md`](docs/benchmarks.md)**——每一场的帧数、事件数、延迟 p50/p90、费用，
 以及版本演进过程中哪一步让指标变好/变坏。读的时候先看那页末尾的"口径坑"，否则容易把数字读反。

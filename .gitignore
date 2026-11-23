@@ -24,3 +24,7 @@ Thumbs.db
 
 # 打包产物（node scripts/pack.mjs 生成）
 dist/
+
+# 分发时用的临时目录（用户 2026-11-23 起把 -main/-env 拼在一起，再压 rar）
+/dsh-watch-along-*/
+*.rar
