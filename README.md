@@ -129,6 +129,12 @@ scripts\start-services.cmd
 
 画面链路复用 [dsh-see-now](https://github.com/SAOS-3624/dsh-see-now)（Apache-2.0）；字幕链路的思路与可插拔接口来自 [dsh-streamvision](https://github.com/shet114513/dsh-streamvision)（MIT）；VAD 与幻觉过滤来自 [dsh-better-ears](https://github.com/Destinhue/dsh-better-ears)（MIT）；转写参数参考 [dsh-soundtry](https://github.com/CixiSVesper/dsh-soundtry)。
 
+## 许可证
+
+本项目自己的代码用 [MIT 许可证](LICENSE) —— 拿去改、拿去商用都行，保留版权声明即可。
+
+`vendor/` 下是从上面几个项目搬来的代码，**不算在本项目的 MIT 授权里**，仍按各自原许可证执行（Apache-2.0 / MIT），每个目录里都有对应的 `LICENSE`。
+
 ---
 
 **更新记录**：[`CHANGELOG.md`](CHANGELOG.md) —— 只记用户能感知的变化与口径变更。<br>

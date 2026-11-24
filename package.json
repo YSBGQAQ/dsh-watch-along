@@ -2,6 +2,7 @@
   "name": "dsh-watch-along",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "description": "让 AI 陪你看网页直播：画面拼图 + 屏幕字幕 + 系统声音",
   "main": "./index.js",
