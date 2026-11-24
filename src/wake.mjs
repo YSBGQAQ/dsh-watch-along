@@ -49,22 +49,33 @@ export function buildSummary(events, { now, windowMs, max, format = formatEvent 
 /**
  * 陪聊提示词的默认值（设置里可改）。
  *
- * `{n}` 会被替换成「主动说话间隔」的秒数 —— 让模型知道"过去多少秒"，
- * 否则它会按自己想象的窗口评价。
+ * 2026-11-24 换过一版：用户要"一句三十字以内的白话""像好朋友面对面聊天"。
+ * 原来的版本要求"对过去 {n} 秒的剧情做评价"，模型容易写成长段影评；
+ * 新版把长度和口吻都写死，并且**明确不许包在代码块里**（和静默观察那句正好相反）。
  *
- * 为什么要写"沉浸式理解 / 有自己思考"：模型收到的只有这一条 user 消息，
- * 不写角色与粒度，它就退化成逐帧复述（2026-11-22 实测三分钟七十多轮）。
+ * `{n}` 仍然支持：自定义模板里写 `{n}` 会被替换成「主动说话间隔」的秒数；
+ * 默认这句不写它 —— 三十字以内塞进秒数没有意义。
  */
 export const DEFAULT_COMMENT_PROMPT =
-  '你是我一起看视频的搭子，你专业、健谈、同理心强。' +
-  '你必须沉浸式地理解内容，并对过去 {n} 秒的剧情做出评价；两三句话点到为止即可。' +
-  '不是简单陈述画面，而是有自己思考地对剧情提出见解、看法或疑问。'
+  '你是我一起看视频的搭子，你必须用一句三十字以内的白话来跟我分享，' +
+  '就像我们两个好朋友在面对面聊天一样，直接正常输出绝不包含在代码块里；' +
+  '不能陈述画面，而是经过自己思考对剧情提出见解、看法或疑问。'
 
 /** 把 {n} 换成实际秒数；模板里没写 {n} 也照样能用。 */
 export function renderPrompt(template, gapSec) {
   const t = String(template ?? '').trim() || DEFAULT_COMMENT_PROMPT
   return t.replace(/\{n\}/g, String(gapSec))
 }
+
+/**
+ * 静默观察轮（每 observeSec 秒一次）随图发出去的那句话。
+ *
+ * 这段措辞是 2026-11-23 用户定的：回答必须包在代码块里、块外一个字都不写。
+ * 当时我把它改成"不要代码块"，被明确否掉 —— **默认值一个字都别动**，
+ * 现在只是把它做成可调（2026-11-24），默认仍是原文。
+ */
+export const DEFAULT_OBSERVE_PROMPT =
+  '看这一帧，用简短的一句话总结有用信息，一行即可。**只输出这一个代码块，块外不要写任何文字。**'
 
 /**
  * 一条事件怎么变成一行字：带绝对时刻、相对秒数，并标出是画面/字幕/声音。
@@ -167,6 +178,7 @@ export function createWaker({
   now = Date.now,
   minGapMs = null, // 不传就按 gapSec 算：说话间隔本身就是闸门
   promptTemplate = DEFAULT_COMMENT_PROMPT, // 设置里的「陪聊提示词」
+  observePrompt = DEFAULT_OBSERVE_PROMPT, // 设置里的「静默提示词」（每 observeSec 秒一轮）
   gapSec = 30, // 用于把模板里的 {n} 换成实际秒数
   sheetId = () => null, // 最近一张拼图的编号（可能没有）
   composeSec = 3, // 这张拼图覆盖多少秒（只用于文案）
@@ -289,7 +301,8 @@ export function createWaker({
       events: shown.map(packEvent),
       // 这段措辞是**用户定的**，别"优化"：观察轮的回答必须包在代码块里、
       // 块外一个字都不写。2026-11-23 08:16 我把它改成"不要代码块"，被明确否掉。
-      prompt: '看这一帧，用简短的一句话总结有用信息，一行即可。**只输出这一个代码块，块外不要写任何文字。**',
+      // 2026-11-24 起可以在设置里改（默认值仍是这句原文）。
+      prompt: String(observePrompt ?? '').trim() || DEFAULT_OBSERVE_PROMPT,
     }
     // **紧凑序列化**（不缩进）：缩进约占 25%，而模型不在乎好看。
     const prompt = JSON.stringify(payload)
@@ -411,7 +424,10 @@ export function createWaker({
     events = []
     introSent = false
     lastObserveAt = 0
-    lastWakeAt = 0
+    // 第一次说话也要等满一个间隔（2026-11-24 用户要求）。
+    // 原来置 0，等于"没有任何上一次"，开场那一下画面必然强变化，于是 1 秒内就冒第一句；
+    // 现在记成"刚开始的那一刻"，于是默认 30 秒后才允许第一次开口。
+    lastWakeAt = now()
     frameNudges = 0
     observeNudges = 0
     misses = 0

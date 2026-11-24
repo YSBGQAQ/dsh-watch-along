@@ -78,12 +78,25 @@ test('speechPerMin 允许 0（= 不限制），31 拒', () => {
   assert.equal(validate({ speechPerMin: 2.5 }).ok, false)
 })
 
-test('陪聊提示词：默认带 {n}，空串与超长都拒', () => {
-  assert.match(validate({}).value.commentPrompt, /\{n\}/, '默认提示词要有 {n} 占位')
+test('陪聊提示词：默认是"三十字以内、不进代码块"那版，空串与超长都拒', () => {
+  const d = validate({}).value.commentPrompt
+  assert.match(d, /三十字/, '默认要限制长度')
+  assert.match(d, /绝不包含在代码块里/, '默认要求直接输出、不包代码块')
+  assert.doesNotMatch(d, /\{n\}/, '默认这句不写 {n}：三十字以内塞不下秒数')
   assert.equal(validate({ commentPrompt: '随便聊两句' }).value.commentPrompt, '随便聊两句')
   assert.equal(validate({ commentPrompt: '' }).ok, false)
   assert.equal(validate({ commentPrompt: '   ' }).ok, false)
   assert.equal(validate({ commentPrompt: 'x'.repeat(601) }).ok, false)
+})
+
+// 静默提示词（2026-11-24 加）：默认必须还是 2026-11-23 用户定的那句（包在代码块里），
+// 可改，但空串与超长要拒 —— 空串会让观察轮不知道该干什么。
+test('静默提示词：默认带"代码块"要求，可改，空串与超长都拒', () => {
+  assert.match(validate({}).value.observePrompt, /代码块/, '默认必须保留"包在代码块里"这句')
+  assert.equal(validate({ observePrompt: '看这一帧，说重点' }).value.observePrompt, '看这一帧，说重点')
+  assert.equal(validate({ observePrompt: '' }).ok, false)
+  assert.equal(validate({ observePrompt: '   ' }).ok, false)
+  assert.equal(validate({ observePrompt: 'x'.repeat(601) }).ok, false)
 })
 
 test('传图档位：默认低清，三档之外的都拒', () => {

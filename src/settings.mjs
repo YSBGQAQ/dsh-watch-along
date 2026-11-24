@@ -2,7 +2,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { DEFAULT_COMMENT_PROMPT } from './wake.mjs'
+import { DEFAULT_COMMENT_PROMPT, DEFAULT_OBSERVE_PROMPT } from './wake.mjs'
 //
 // 设置页只是它的壳子：界面读这里、写这里，校验也在这里。
 // 放在 JS 而不是界面里，是因为"什么算合法"必须能单测。
@@ -26,7 +26,9 @@ export const DEFAULTS = Object.freeze({
   // 陪聊提示词。{n} 会被替换成「主动说话间隔」的秒数。
   // 唯一来源在 src/wake.mjs：两份文案会漂，而模型只看到发出去的那一份
   commentPrompt: DEFAULT_COMMENT_PROMPT,
-
+  // 静默提示词：每 observeSec 秒一轮「只看不说」时随图发出去的那句话。
+  // 默认值 = 2026-11-23 用户定的原文（必须包在代码块里），别改默认。
+  observePrompt: DEFAULT_OBSERVE_PROMPT,
   host: '0.0.0.0',
   audioSource: 'system', // system = 整机混音；process:<pid|名字> = 只录某个进程（采集已实现，票 17）。注意：真正生效的是 asr_service 的环境变量 WATCH_ALONG_AUDIO_SOURCE，这个设置项还没接到那条线上 // 手机端监听地址：0.0.0.0 = 局域网可连，127.0.0.1 = 只本机
   // 高级（折叠）：裸阈值，正常不该改
@@ -60,6 +62,12 @@ export function validate(patch, current = DEFAULTS) {
         else if (!raw.trim()) reject(key, '不能为空（留空就不知道该怎么说话了）')
         else if (raw.length > 600) reject(key, '太长了（最多 600 字），模型会当成正文去读')
         else value.commentPrompt = raw
+        break
+      case 'observePrompt':
+        if (typeof raw !== 'string') reject(key, '必须是字符串')
+        else if (!raw.trim()) reject(key, '不能为空（留空就不知道让它看什么）')
+        else if (raw.length > 600) reject(key, '太长了（最多 600 字），模型会把它当成正文去读')
+        else value.observePrompt = raw
         break
       case 'observeSec': {
         const n = Number(raw)

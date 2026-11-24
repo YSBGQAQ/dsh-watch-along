@@ -144,8 +144,26 @@ test('reset() 恢复：新一次 watch_start 后能重新唤醒', async () => {
   h.waker.reset()
   assert.equal(h.waker.state.exhausted, false)
   assert.equal(h.waker.state.misses, 0)
+  // 2026-11-24：reset 之后第一次说话也要等满一个间隔，所以先把表往前拨
+  h.advance(31_000)
   h.waker.feed({ kind: 'motion', strength: 'high', at: h.t })
   assert.equal((await h.waker.maybeWake({ kind: 'motion', strength: 'high' })).woke, true)
+})
+
+test('开场不抢话：reset 后第一秒不唤醒，满 30 秒才允许（2026-11-24）', async () => {
+  const h = harness({ gapSec: 30, hasUserMessageSince: async () => false })
+  h.waker.reset()
+
+  h.waker.feed({ kind: 'motion', strength: 'high', at: h.t })
+  const early = await h.waker.maybeWake({ kind: 'motion', strength: 'high' })
+  assert.equal(early.woke, false, '第一秒不该开口')
+  assert.equal(early.reason, 'too-soon')
+  assert.equal(h.sent.length, 0)
+
+  h.advance(30_000)
+  h.waker.feed({ kind: 'motion', strength: 'high', at: h.t })
+  const later = await h.waker.maybeWake({ kind: 'motion', strength: 'high' })
+  assert.equal(later.woke, true, '满 30 秒后应该允许第一次开口')
 })
 
 test('摘要：只取最近 3 分钟、最多 20 条、按强度排序', () => {
@@ -197,10 +215,12 @@ test('strength 的真实取值 high/medium/low 都要认对（medium 不许排�
 // ── 陪聊提示词：这次翻车就翻在这几句上 ──────────────────────────────
 import { DEFAULT_COMMENT_PROMPT, renderPrompt } from '../src/wake.mjs'
 
-test('默认提示词是"评价剧情"，不是"只说一句"', () => {
+test('默认提示词：一句话白话、不许进代码块，但仍然要"有思考"而不是复述', () => {
   assert.match(DEFAULT_COMMENT_PROMPT, /搭子/)
-  assert.match(DEFAULT_COMMENT_PROMPT, /评价/)
-  assert.match(DEFAULT_COMMENT_PROMPT, /见解|看法|疑问/)
+  assert.match(DEFAULT_COMMENT_PROMPT, /三十字/, '默认要限长')
+  assert.match(DEFAULT_COMMENT_PROMPT, /绝不包含在代码块里/, '主动说话要直接输出，不包代码块')
+  assert.match(DEFAULT_COMMENT_PROMPT, /见解|看法|疑问/, '要提出自己的看法')
+  assert.match(DEFAULT_COMMENT_PROMPT, /不能陈述画面/, '不许复述画面')
   assert.doesNotMatch(DEFAULT_COMMENT_PROMPT, /只说了这一句就够/)
 })
 
@@ -270,6 +290,21 @@ test('observe() 只说"别说话"，不带陪聊提示词', async () => {
   assert.match(j.prompt, /一句话/)
   assert.match(j.prompt, /代码块/)
   assert.doesNotMatch(JSON.stringify(j), /说两句/, '观察轮不该带陪聊提示词')
+})
+
+test('observe() 用设置里的静默提示词（2026-11-24 可调）', async () => {
+  const sent = []
+  const w = createWaker({
+    enabled: true,
+    gapSec: 30,
+    promptTemplate: '你是搭子',
+    observePrompt: '只看这一帧，一句话说完，包在代码块里',
+    sheetId: () => null,
+    send: async (t) => sent.push(t),
+  })
+  await w.observe()
+  const j = JSON.parse(sent[0])
+  assert.equal(j.prompt, '只看这一帧，一句话说完，包在代码块里')
 })
 
 // ── 提示词只发一次：之后只带数据，避免"每条都像这一帧的回复" ──────────
