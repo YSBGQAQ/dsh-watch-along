@@ -47,7 +47,7 @@
 - `better-ears`：三级降级 host `speechToText`(SenseVoice) / http / command，`lib/asr.js:431` `transcribeFile(file, ...)`、`lib/tools.js:219` 「Transcribe speech in an **audio or video file**, with timestamps and an SRT track」——**喂文件**。 — 本地 `dsh-better-ears-main/lib/asr.js`、`lib/tools.js`（桌面只读 zip，2026-11-22 用 Python zipfile 读取）
 - `hear`：**修正 team-lead 提示的误判**——它不是实时流。`README.md:16` 「QQ：盯着**桥接目录里的语音文件**，听完把结论递回给 agent」；`index.js:838` 「盯 QQ 桥接落盘的语音文件：看到新的就等静默，再一只只听」、`:839` `class QqWatcher`、`:903` `fs.watch(dir, (_event, filename) => ...)`、`:51` `qqWatch: { enabled, mediaDir, prefix: 'media_' }`。是**文件落地后离线分析**。引擎 FunASR `iic/SenseVoiceSmall`（`server/fast_server.py:32`）+ Qwen2-Audio/Omni 大模型听感（`index.js:84-101`），需 6G 显存起。 — 本地 `vendor/dsh-hear-main/index.js`、`README.md`、`server/fast_server.py`（2026-11-22）
 - `soundtry`：`faster-whisper medium`（可 `large-v3`）+ MDX/Demucs 人声分离，**CLI**（`python/soundtry.py:19` `import argparse`、`:2732` `argparse.ArgumentParser`、`:993` `WhisperModel(pick_model(args.model), device=args.device)`、`:2757` `--separate` 默认 True），工具 `sound_transcribe input="D:/课.mp4" start=600 end=720`——**喂文件、按窗口切**。 — 本地 `dsh-soundtry-main/python/soundtry.py`、`README.md`（zip，2026-11-22）
-- `qian-music`：**Qwen Omni 原生音视频，不做 ASR**；`index.mjs:25` 「原生音视频通过 qian_media 工具读取，**不使用 ASR 代替**」；B 站链路是「下载实际音视频 → FFmpeg 合并 → 私有 OSS → Omni 主会话原生听看」。 — 本地 `qian-music-dsh-main/index.mjs`、`docs/BILIBILI.md`（zip，2026-11-22）
+- `qian-music`：**Qwen Omni 原生音视频，不做 ASR**；`index.mjs:25` 「原生音视频通过 qian_media 工具读取，**不使用 ASR 代替**」；B 站链路是「下载实际音视频 → FFmpeg 合并 → 私有 OSS → Omni 主会话原生听看」。 — 当时解压在 `vendor/qian-music-dsh-main/`（2026-11-24 已从仓库移除：该项目没有许可证，公开仓库不宜再分发；原文仍可从其原始 zip 取）
 
 ### E. `dsh-watch-together`（问题 5 补充核验）
 
