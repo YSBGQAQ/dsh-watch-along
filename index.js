@@ -5,10 +5,11 @@
 import { createWatchService } from './src/service.mjs'
 import { createTools } from './src/tools.mjs'
 import { listWindows, lookupWindow } from './src/windows.mjs'
-import { startCapture } from './src/capture-koffi.mjs' // ADR 0005：koffi 直抓替代 ffmpeg
+import { startCapture, screenSize } from './src/capture-koffi.mjs' // ADR 0005：koffi 直抓替代 ffmpeg
 import { encode } from './src/png.mjs'
 import { createPipeline } from './vendor/dsh-see-now-main/src/pipeline.js'
 import { createSubtitleReader } from './src/ocr.mjs'
+import { cropBand, judge, looksLikeText, OCR_BAND } from './src/ocr-check.mjs'
 import { createSpeechReader } from './src/speech.mjs'
 import { createMobileServer } from './src/http.mjs'
 import { createWaker, observeFloor, shouldObserve } from './src/wake.mjs'
@@ -138,6 +139,13 @@ export function apply(ctx, opts = {}) {
   // 设置（票 07）：启动时读一次，改完要重启才生效 —— 这是票面承认的约定。
   const settingsFile = path.join(HERE, '.scratch', 'run', 'settings.json')
   const cur = loadSettings(settingsFile).value
+  // 窗口片段**每次启动都从空开始**（用户 2026-11-24 要求）：锁定只在本次运行内有效。
+  // 不这么做的话，上次锁的窗口早就关了，本次启动还在拿旧片段找窗口，找不到也不明白为什么。
+  cur.window = ''
+
+  // 本次运行内锁定的窗口（不落盘）。lockNoticePending 只让"已锁定"提示出现一次。
+  let lockedWindow = ''
+  let lockNoticePending = false
 
   // 环境日志是**按会话**记的，不是按进程：同一个 DSH 进程里开两个会话，
   // 就应该是两条记录（它们的模型、上下文、设置可能不同）。
@@ -409,6 +417,8 @@ export function apply(ctx, opts = {}) {
       // 节奏交给下面的 watchLoop 管（tick 每 2 秒一次），waker 只负责"说什么"。
       // 两边都设间隔会互相打架：0 表示不在这里节流。
       promptTemplate: cur.commentPrompt,
+      // 静默观察轮随图发的那句话：设置里可改，默认是 2026-11-23 定的原文。
+      observePrompt: cur.observePrompt,
       sheetId: () => lastComposite ?? lastSheet,
       composeSec: 3,
       // 强制看图：图能随消息附上时（正常情况）就不必再走工具，门闩直接放行；
@@ -695,6 +705,132 @@ export function apply(ctx, opts = {}) {
   // "循环等 watch_start 再起"就断了）。
   const disposers = []
 
+  // ── 窗口识别测试（面板「测试并锁定匹配窗口」）──────────────────────────────
+  // 2026-11-24 用户定的形态：
+  //   · 按**窗口标题片段**找窗口（要"锁定"就得先指认是哪个窗口，所以回到这条路）
+  //   · 抓到一帧只看底部字幕带，**认到任意文字就算通过**（不再要求先输入期望文字）
+  //   · 通过就**锁定**：片段写进 settings.window，矩形记进 service.lastRegion
+  //     —— 之后「开始陪看」不给窗口、手机 /api/start 不带 body，都拿它兜底
+  // 仍然裸起 startCapture 抓一帧就关：走 service.start() 会改会话状态、重置唤醒计时、
+  // 往日志里留一条"刚开就停"的空账，代价比收益大。
+  const grabOneFrame = (rect, { timeoutMs = 3000 } = {}) =>
+    new Promise((resolve, reject) => {
+      let done = false
+      let cap = null
+      const finish = (err, frame) => {
+        if (done) return
+        done = true
+        clearTimeout(timer)
+        try {
+          cap?.stop()
+        } catch {
+          /* 已经停了 */
+        }
+        if (err) reject(err)
+        else resolve(frame)
+      }
+      const timer = setTimeout(() => finish(new Error('3 秒内没抓到帧（窗口可能最小化或已关闭）')), timeoutMs)
+      cap = startCapture({
+        region: rect,
+        width: viewSize.width,
+        height: viewSize.height,
+        fps: 20, // 只为尽快出第一帧；测试不关心帧率
+        onFrame: (f) => finish(null, f),
+        onClose: (msg) => finish(new Error(String(msg))),
+      })
+    })
+
+  const ocrTestRoute = async ({ body } = {}) => {
+    let p = {}
+    try {
+      p = body ? JSON.parse(body) : {}
+    } catch {
+      return { ok: false, error: '请求体不是合法 JSON' }
+    }
+
+    // expect 只剩手机端老客户端会带；不带就按"任意文字"判，不再强制输入。
+    const expect = String(p.expect ?? '').trim()
+    const fragment = String(p.window ?? '').trim() || cur.window || ''
+    if (!fragment) return { ok: false, error: '先填「窗口标题片段」：它是窗口标题里的一段字' }
+
+    const rect = lookupWindow(fragment)
+    if (!rect) {
+      const list = (listWindows?.() ?? []).filter(Boolean)
+      const head = list.slice(0, 12).join(' / ')
+      const more = list.length > 12 ? ` …（共 ${list.length} 个）` : ''
+      // 加括号里这句，是因为真的有人把"画面上的一句字幕"填进这个框
+      // （2026-11-24 用户实测：填「破案了兄弟们」，然后纳闷为什么找不到窗口）。
+      return {
+        ok: false,
+        error: `找不到窗口「${fragment}」。当前可见窗口：${head || '（无）'}${more}（这里要填窗口标题里的一段字，不是画面上的字幕）`,
+      }
+    }
+
+    const t0 = Date.now()
+    let shot
+    try {
+      shot = await grabOneFrame(rect)
+    } catch (e) {
+      return { ok: false, error: `抓不到画面：${String(e?.message ?? e)}` }
+    }
+
+    const cropped = cropBand(shot)
+    if (!cropped) return { ok: false, error: '裁不出底部区域：这一帧尺寸异常' }
+
+    let lines
+    try {
+      lines = (await recognize(encode(cropped))) ?? []
+    } catch (e) {
+      return {
+        ok: false,
+        error: `OCR 服务没响应：${String(e?.message ?? e)}（先去上面「服务」里把它启动起来）`,
+      }
+    }
+
+    // 带 expect 的按老规矩比；不带的就是"认到像文字的东西"即通过。
+    // 为什么要 looksLikeText 这一刀：底带里常混着模糊的搜索框/按钮边缘，
+    // OCR 会吐出 `A:4i4…1-×4` 这种串 —— 不加这刀就会把噪声当成功、把窗口锁错。
+    const usable = lines.filter(looksLikeText)
+    const judged = expect
+      ? judge(lines, expect)
+      : { matched: usable.length > 0, exact: false, contains: false, lines, best: null }
+
+    // 通过才锁定：锁一个读不到字的窗口没有意义。
+    let locked = false
+    if (judged.matched) {
+      cur.window = fragment // 工具与手机端的默认窗口，立刻生效
+      service.rememberRegion(rect) // 记住矩形，之后临时抓帧不用再找窗口
+      lockedWindow = fragment
+      lockNoticePending = true // 下一次 watch_start 提示一次"现在锁定的是谁"
+      locked = true
+    }
+
+    return {
+      ok: true,
+      matched: judged.matched,
+      expect,
+      window: fragment,
+      locked,
+      source: 'window',
+      band: `画面下方 ${Math.round((OCR_BAND.height ?? 1) * 100)}%（${Math.round((OCR_BAND.top ?? 0) * 100)}%–100%）`,
+      size: `${cropped.width}×${cropped.height}`,
+      lines: judged.lines,
+      best: judged.best,
+      ms: Date.now() - t0,
+    }
+  }
+
+  // 面板「看看有哪些窗口」：原生枚举（微秒级），和按标题匹配用同一套判据 ——
+  // 列出来的就一定能匹配到，不会出现"列表里有、点测试却说找不到"。
+  const listWindowsRoute = async () => {
+    try {
+      const windows = (listWindows?.() ?? []).filter(Boolean)
+      return { ok: true, count: windows.length, windows }
+    } catch (e) {
+      return { ok: false, error: String(e?.message ?? e) }
+    }
+  }
+
   const supervisor = createSupervisor({
     log: both,
     rootDir: HERE,
@@ -704,7 +840,9 @@ export function apply(ctx, opts = {}) {
   })
   // 测试/预检模式不占端口（监听中的 server 会让进程不退出，把测试挂死）
   const skipPanel = opts.panel === false || process.env.WATCH_ALONG_NO_PANEL === '1'
-  const panelServer = skipPanel ? null : supervisor.serve()
+  const panelServer = skipPanel
+    ? null
+    : supervisor.serve({ routes: { 'POST /ocr-test': ocrTestRoute, 'GET /windows': listWindowsRoute } })
   disposers.push(() => {
     try {
       panelServer?.close?.()
@@ -730,7 +868,14 @@ export function apply(ctx, opts = {}) {
     service,
     listWindows,
     serviceStatus: () => supervisor.status(),
-    defaultWindow: cur.window || '',
+    // 传函数而不是字符串：面板「测试并锁定」改了 window 之后要立刻生效，不能等重启 DSH。
+    defaultWindow: () => cur.window || '',
+    // 「已锁定」提示只发一次：锁完之后模型第一次 watch_start 时告诉它现在盯的是谁。
+    lockNotice: () => {
+      if (!lockedWindow || !lockNoticePending) return null
+      lockNoticePending = false
+      return `现在正在锁定「${lockedWindow}」窗口（本次运行内有效；重启 DSH 后要重新锁定）`
+    },
     uploadWidth: cur.imageQuality === 'high' ? 0 : 640,
     // 帧图**必须落在插件目录下**。默认值用的是进程 cwd，而 DSH 启动插件时 cwd 不是仓库根，
     // 结果 2026-11-23 那轮 66 次取帧的 PNG 全写到了别处（日志有"取帧"、仓库里一张没有）。
@@ -796,7 +941,24 @@ export function apply(ctx, opts = {}) {
 
   trace(`apply 完成：注册 ${tools.length} 个工具（${tools.map((t) => t.name).join(',')}）`)
 
-  // 手机端（只读）。启动失败不能影响工具注册 —— 端口被占是常事。
+  // 等 python 服务就绪。supervisor.start() 只是把进程拉起来，模型还要加载 10–30 秒；
+  // 不等就往采集里灌帧，前一二十秒既没字幕也没声音 —— 用户看到的就是"陪看哑了"。
+  // 每次 status() 会真去 probe 两个 /health（各 1.5 秒超时），所以间隔 1 秒够用。
+  const waitServicesReady = async (timeoutMs) => {
+    const deadline = Date.now() + timeoutMs
+    for (;;) {
+      try {
+        const st = await supervisor.status()
+        if (st.services.every((s) => s.up && s.ready !== false)) return true
+      } catch {
+        /* 探不到就当还没起来，下一拍再试 */
+      }
+      if (Date.now() >= deadline) return false
+      await new Promise((r) => setTimeout(r, 1000))
+    }
+  }
+
+  // 手机端：三条只读 + 两条写（启停采集）+ 一条诊断（ocr-test）。启动失败不能影响工具注册 —— 端口被占是常事。
   let mobile = null
   // 预检脚本传 {mobile:false}：否则监听中的 server 会让进程不退出，把 check 挂死。
   if (opts.mobile === false) {
@@ -808,6 +970,44 @@ export function apply(ctx, opts = {}) {
       token,
       port: Number(process.env.WATCH_ALONG_PORT || 8770),
       host: process.env.WATCH_ALONG_HOST || '0.0.0.0', // 默认局域网可连；设置界面可改回 127.0.0.1
+      // 写接口只做"启停采集"：不碰设置、不碰文件、不执行命令。
+      // 接线放在这里而不是 http.mjs —— http 层不认识 supervisor，也不该认识。
+      // ocrTest：与上面面板的 'POST /ocr-test' 是同一个函数对象，手机走 /api/ocr-test。
+      // 特意不复制逻辑：这份实现要抓帧、裁带、调 OCR，两边各写一份必然分叉
+      // （面板测通过、手机说"没认到"，最难查）。改一处两个面一起变。
+      ocrTest: ocrTestRoute,
+      // 窗口列表也开给手机：只读、不动状态，手机端要"点一条选中"就得先列得出来。
+      // 与面板的 GET /windows 是同一个函数。
+      windows: listWindowsRoute,
+      // /api/status 顺手带窗口标题：手机每 2.5 秒轮询它，为一份列表再开一条路由不值当。
+      listTitles: () => listWindows(),
+      control: {
+        async start(window) {
+          // 空窗口用设置里的默认值：手机端不必知道窗口全名。
+          const want = String(window || cur.window || '').trim()
+          if (!want) throw new Error('还没锁定窗口：先在电脑面板「窗口识别测试」里锁定，或请求里带 {"window":"标题片段"}')
+
+          const st = service.status()
+          if (st.state === 'running') throw new Error(`已经在采「${st.window ?? ''}」了，要换窗口先点停止`)
+          if (st.state === 'starting') throw new Error('正在启动采集，稍等一下再试')
+          // 采集中断（窗口没了 / 抓不到帧）不会自己好，必须停掉重来 —— 与面板口径一致。
+          if (st.state === 'failed') {
+            throw new Error(`上一次采集中断了（${st.reason || '原因不明'}），请先停止或重启服务`)
+          }
+
+          const r = await supervisor.start()
+          if (r?.ok === false) throw new Error(r.error || '服务没能启动')
+          // 刚拉起的进程要等模型加载；本来就在跑（started 为空）就直接开工，不白等。
+          if (r?.started?.length && !(await waitServicesReady(20_000))) {
+            throw new Error('两个服务已经拉起，但还没就绪（模型加载中，通常 10–30 秒），请稍后再点一次')
+          }
+
+          return service.start({ window: want })
+        },
+        stop() {
+          return service.stop()
+        },
+      },
     })
     mobile
       .listen()

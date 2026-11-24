@@ -66,15 +66,29 @@ scripts\start-services.cmd
 
 ## 五、手机上看（可选）
 
-服务默认绑 `0.0.0.0`，同一 WiFi 的手机可以读接口：
+服务默认绑 `0.0.0.0`，同一 WiFi 的手机可以读，也能启停采集：
+
+| 接口 | 作用 |
+|---|---|
+| `GET /api/status?token=` | 当前状态（`state` / `window` / `frames` / `region` / `titles` 等），`titles` 是当前可见窗口标题（最多 20 条） |
+| `GET /api/events?token=&sinceId=&wait=` | 长轮询取事件，语义与 `watch_events` 一致 |
+| `GET /api/frame?token=&sheetId=<ID>` | 取已产出的拼图（PNG），10 分钟过期 |
+| `GET /api/frame?token=&live=1` | **现抓一帧**（PNG），同一秒内重复请求回上一张 |
+| `POST /api/start?token=` | 开始采集，body `{"window":"标题片段"}`（可空，空则用设置里的默认窗口） |
+| `POST /api/stop?token=` | 停止采集 |
+| `GET /api/windows?token=` | 列当前可见窗口标题（手机端“点一条选中”用） |
+| `POST /api/ocr-test?token=` | 窗口识别测试并锁定，body `{"window":"标题片段"}`：认到底部任意文字就算通过，并把该窗口设成默认 |
 
 ```
 http://<电脑IP>:8770/api/events?token=<TOKEN>
-http://<电脑IP>:8770/api/frame?token=<TOKEN>&sheetId=<ID>
+http://<电脑IP>:8770/api/frame?token=<TOKEN>&live=1
 ```
 
-- `TOKEN` 在 DSH 日志里，或用 `WATCH_ALONG_TOKEN` 固定
-- **只读**：能看事件和图，不能控制
+- `TOKEN` 在 DSH 日志里（「手机端就绪」那一行），或用 `WATCH_ALONG_TOKEN` 固定
+- 鉴权两种写法都认：`?token=` 或 `Authorization: Bearer <TOKEN>`；不对一律 **401**
+- **写只做启停**：不碰设置、不碰文件、不执行命令。改设置仍然只能在电脑面板里
+- 写接口的失败**不用状态码**：一律 `200` + `{"ok":false,"error":"中文原因"}`，例如没在采、窗口找不到、服务没就绪、已经在采。手机面板可以直接把这句显示出来
+- `live=1` 抓的是调用之后到达的那一帧，最多等 0.8 秒；**窗口最小化/被挡住时会拍到遮挡物**
 - 图 **10 分钟过期**（`WATCH_ALONG_SHEET_TTL_MS` 可调）
 - 不想被局域网访问就设 `WATCH_ALONG_HOST=127.0.0.1`
 
@@ -88,6 +102,8 @@ http://<电脑IP>:8770/api/frame?token=<TOKEN>&sheetId=<ID>
 | 转出来的话是乱的 | 检查是不是抓到了别的窗口的字（`ocr` 的 `text` 里出现菜单栏文字 = 有遮挡） |
 | 事件全是 `motion`、没有文字 | 正常——那段时间画面没字、也没人说话 |
 | 手机打不开 | 防火墙拦了 8770，第一次要允许；或 `token` 拼错 |
+| 手机点「开始」回「还没锁定窗口」 | 去电脑面板「窗口识别测试」里锁定一个窗口；锁定不落盘，重启 DSH 后要重锁一次 |
+| 刚开场一直不说话 | 正常：第一次主动开口也要等满「主动说话间隔」（默认 30 秒），不会开场就抢话 |
 | 手机图是破的 | 图过期了（10 分钟），这是设计 |
 | 报 `cublas64_12.dll is not found` / `GPU 转写不可用` | 缺 GPU 运行时，跑 `scripts\setup.cmd` 重装后重启服务。按 ADR 0003 **不会**静默退回 CPU，服务会直接报错停在原地 |
 | 没有 `ocr` 事件 / OCR 报错 | `/health` 只查模型加载，**不代表能推理**；用 `POST /ocr` 一张本地图确认返回 `ok:true`。GPU 版已回退 CPU，若还见 `CUBLAS ... resource allocation failed` 说明环境里残留 GPU 包或旧进程 |
@@ -96,7 +112,7 @@ http://<电脑IP>:8770/api/frame?token=<TOKEN>&sheetId=<ID>
 ## 七、已知限制
 
 1. **遮挡无解**。抓的是屏幕像素，被盖住就抓到遮挡物。用的时候把目标窗口放前面。
-2. **底部字幕带仍有 UI 噪声**。现在只跑 bottom 一条带（`top:0.66, height:0.34, scale:3`），不再整幅识别；但水印、清晰度角标、播放器控制条仍会混进 `ocr` 事件（实测约 10–17%），靠「汉字 < 2 丢弃」和「相似组出现 3 次后静音」挡一部分。
+2. **底部字幕带仍有 UI 噪声**。现在只跑 bottom 一条带（`top:0.66, height:0.34, scale:1`，不放大），不再整幅识别；但水印、清晰度角标、播放器控制条仍会混进 `ocr` 事件（实测约 10–17%），靠「汉字 < 2 丢弃」和「相似组出现 3 次后静音」挡一部分。
 3. **整机混音**。录的是"电脑在放什么"，会连微信提示音一起录进去。
 4. **识别噪声**。技术词容易听错：`帧/针`、`阈值/预值`。不影响"听懂大意"。基准点：2026-11-22 实测《反向之地》0–300 秒，bigram 覆盖 **85.9%**、逐句命中 83.8%（`beam_size=5`）。换内容会变，这只是一个参照。
 5. **设置没有界面**。改配置只能改 `watch-along.json` 或环境变量（宿主不发放客户端服务，见票 07）。
@@ -117,3 +133,7 @@ node scripts\check-transcript.mjs <字幕.json> 0 300  :: 转写与字幕对照
 
 **实测数据在 [`docs/benchmarks.md`](docs/benchmarks.md)**——每一场的帧数、事件数、延迟 p50/p90、费用，
 以及版本演进过程中哪一步让指标变好/变坏。读的时候先看那页末尾的"口径坑"，否则容易把数字读反。
+
+---
+
+**更新记录**：[`CHANGELOG.md`](CHANGELOG.md)——只记用户能感知的变化与口径变更（比如"手机从只读变可读写""第一次说话要等 30 秒"）。

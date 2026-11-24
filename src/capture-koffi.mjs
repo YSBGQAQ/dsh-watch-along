@@ -88,6 +88,38 @@ export function screenSize() {
 }
 
 /**
+ * 列出当前所有可见顶层窗口的标题（原生枚举，微秒级）。
+ *
+ * 为什么不用 PowerShell：起一个 powershell.exe 约 300ms，每秒刷一次就是持续
+ * 300ms 的 CPU 抖动；而且 PowerShell 列的是"进程的主窗口标题"，这里列的是
+ * "顶层可见窗口" —— 两个来源会不一致（列表里有、匹配时找不到）。
+ * 用同一套判据（可见 + 标题非空）之后，列表里出现的就一定能被 findWindow 匹配到。
+ */
+export function listWindowTitles({ limit = 200 } = {}) {
+  const seen = new Set()
+  const out = []
+  const proc = koffi.register((hwnd) => {
+    if (!IsWindowVisible(hwnd)) return 1
+    const len = GetWindowTextLengthW(hwnd)
+    if (len <= 0) return 1
+    const buf = Buffer.alloc((len + 1) * 2)
+    const n = GetWindowTextW(hwnd, buf, len + 1)
+    const title = buf.subarray(0, n * 2).toString('utf16le').trim()
+    if (title && !seen.has(title)) {
+      seen.add(title)
+      out.push({ hwnd: Number(hwnd), title })
+    }
+    return out.length >= limit ? 0 : 1
+  }, koffi.pointer(ENUMPROC))
+  try {
+    EnumWindows(proc, 0)
+  } finally {
+    koffi.unregister(proc)
+  }
+  return out
+}
+
+/**
  * 按标题拿窗口矩形（物理像素）。找不到/最小化返回 null。
  * @param {string} title 标题或标题片段 —— **必须是字符串**，传 hwnd 会段错误
  */

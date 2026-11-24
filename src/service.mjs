@@ -88,6 +88,10 @@ export function createWatchService({
   let latestSheet = null // 最近一张真拼出来的图（pipeline 出图时才更新）
   let prevBuf = null
   let title = null
+  // 上一场陪看盯的那块屏幕（stop 之后**故意不清**）。
+  // 用途：面板的「看一次」在没陪看时也要能临时抓一帧 —— 知道去哪抓，
+  // 就不用为了测一次而重新按标题找窗口（用户 2026-11-24 明确不要标题匹配）。
+  let lastRegion = null
   let startedAt = null
   let state = 'idle'
   let reason = null
@@ -109,6 +113,8 @@ export function createWatchService({
       since: startedAt,
       fps: capture ? capture.params.fps : null,
       region: capture ? capture.params.region : null,
+      // 没在采时也能知道"上次盯的是哪块"——面板临时抓一帧要用。
+      lastRegion,
       size: capture ? { width: capture.params.width, height: capture.params.height } : null,
       session: lastSession, // 最近一次会话的汇总（没跑过就是 null）
     }
@@ -276,6 +282,8 @@ export function createWatchService({
     }
 
     title = want
+    // 记下这块矩形：stop 之后面板还要用它临时抓一帧（见 lastRegion 的注释）。
+    lastRegion = capture.params.region
     startedAt = now()
     state = 'running'
     reason = null
@@ -304,7 +312,7 @@ export function createWatchService({
    * `live: true` 会等一个「调用之后才到达」的帧 —— 否则拿到的可能是几百毫秒前的旧帧。
    * `live: false` 用手上最新的帧，立即返回。
    */
-  async function frame({ sheetId = null, live = false, timeoutMs = 3000, maxWidth = 0 } = {}) {
+  async function frame({ sheetId = null, live = false, timeoutMs = 3000, maxWidth = 0, raw = false } = {}) {
     if (sheetId) {
       const hit = sheetStore.get(sheetId)
       if (!hit) throw new Error(`没有这张拼图：${sheetId}（只留最近 ${SHEET_KEEP} 张）`)
@@ -329,6 +337,9 @@ export function createWatchService({
 
     const { buf, t, at } = latest
     const { width, height } = capture.params
+    // 只要像素、不要 PNG：面板的「看一次」要自己裁底部那条带再送 OCR，
+    // 编码一次再解码回来纯属浪费（一帧 50–200KB）。
+    if (raw) return { buf, width, height, t, at }
     // t = 相对采集开始的秒数；at = 墙上时间(epoch ms)。两个都要：前者对齐音频，
     // 后者跨进程可读（见 ADR 0003 关于时间码的决定）。
     const pngFull = encode({ width, height, rgb: buf })
@@ -426,6 +437,15 @@ export function createWatchService({
     return latestSheet
   }
 
+  /**
+   * 由外部锁定一块区域（面板「测试并锁定匹配窗口」用）。
+   * 锁上之后，即使没在陪看，也能按这块矩形临时抓帧；下次 watch_start 不给窗口时也用它兜底。
+   */
+  function rememberRegion(region) {
+    if (region && Number(region.width) > 0 && Number(region.height) > 0) lastRegion = { ...region }
+    return lastRegion
+  }
+
   /** 给外部通道（字幕/声音）往同一条队列里投事件。 */
   function emit(kind, payload) {
     try {
@@ -451,5 +471,5 @@ export function createWatchService({
     }
   }
 
-  return { start, stop, frame, rawFrame, sheet, composeSheet, status, events, emit, snapshot }
+  return { start, stop, frame, rawFrame, sheet, composeSheet, status, events, emit, snapshot, rememberRegion }
 }

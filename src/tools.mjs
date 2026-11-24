@@ -40,7 +40,7 @@ function savePng(shot, seq, dir) {
   return file
 }
 
-export function createTools({ service, listWindows, attachments = null, outDir = RUN_DIR, onAgent = null, onFrame = null, serviceStatus = null, defaultWindow = '', uploadWidth = UPLOAD_MAX_W }) {
+export function createTools({ service, listWindows, attachments = null, outDir = RUN_DIR, onAgent = null, onFrame = null, serviceStatus = null, defaultWindow = '', lockNotice = null, uploadWidth = UPLOAD_MAX_W }) {
   let seq = 0
 
   /**
@@ -167,9 +167,20 @@ export function createTools({ service, listWindows, attachments = null, outDir =
       // 不是靠猜出来的，就是这里抓到的那一个**。
       async execute(args = {}, run) {
         onAgent?.(run?.agent ?? null)
-        // 设置里的「窗口标题片段」当默认值：模型没给窗口时不用再问一句
-        const started = await service.start({ window: args.window || defaultWindow || '' })
+        // settings.window 当默认值（面板锁定窗口后立刻生效：所以允许传函数，
+        // 传字符串就得重启 DSH 才更新）。模型没给窗口时兜一下。
+        const fallback = typeof defaultWindow === 'function' ? defaultWindow() : defaultWindow
+        const want = args.window || fallback || ''
+        // 没锁定又没指定：直接说清楚该去哪做什么，别让它自己猜一个窗口名。
+        if (!want) {
+          throw new Error(
+            '还没锁定窗口：去设置面板「窗口识别测试」点「看看有哪些窗口」，选一个，再点「测试并锁定匹配窗口」',
+          )
+        }
+        const started = await service.start({ window: want })
         const warnings = await serviceWarnings()
+        // 「现在锁定的是谁」只提示一次（锁完后的第一次调用），否则每轮都念一遍很吵。
+        const notice = !args.window && typeof lockNotice === 'function' ? lockNotice() : null
         // **开场一次给全**：图 + 最近 10 秒的字幕/听写。
         // 以前这里只返回"开始了"，模型还得追一次 watch_frame —— 用户看到的就是
         // 开场连着四个工具调用（status → windows → start → frame），十几秒才出第一句。
@@ -179,7 +190,7 @@ export function createTools({ service, listWindows, attachments = null, outDir =
         } catch (e) {
           snap = { frameError: String(e?.message ?? e) }
         }
-        return { ...started, ...(warnings.length ? { warnings } : {}), ...snap }
+        return { ...started, ...(warnings.length ? { warnings } : {}), ...(notice ? { notice } : {}), ...snap }
       },
     },
     {

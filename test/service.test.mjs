@@ -77,6 +77,46 @@ test('按需取图能拿到一张合法 PNG，且带两个时间码', async () =
   assert.equal(svc.status().state, 'idle')
 })
 
+test('要原始像素时（raw）不编码 PNG —— 面板测试要自己裁底部', async () => {
+  const svc = createWatchService(base())
+  await svc.start({ window: '直播', size: { width: 798, height: 450 } })
+
+  const shot = await svc.frame({ live: true, raw: true })
+  assert.equal(shot.width, 798)
+  assert.equal(shot.height, 450)
+  assert.ok(Buffer.isBuffer(shot.buf), 'buf 应该是 Buffer')
+  assert.equal(shot.buf.length, 798 * 450 * 3, 'RGB 三通道，一字节不多一字节不少')
+  assert.equal(shot.png, undefined, 'raw 模式不该顺手编一张 PNG')
+
+  await svc.stop()
+})
+
+test('stop 之后仍记得上次那块矩形（面板临时抓帧要用）', async () => {
+  const svc = createWatchService(base())
+  assert.equal(svc.status().lastRegion, null, '没陪过看时不该有值')
+
+  await svc.start({ window: '直播' })
+  const started = svc.status()
+  assert.deepEqual(started.lastRegion, started.region)
+
+  await svc.stop()
+  const after = svc.status()
+  assert.equal(after.region, null, '停止后当前区域清空')
+  assert.ok(after.lastRegion, '但上次那块要留着')
+  assert.equal(after.lastRegion.width, started.region.width)
+})
+
+test('面板锁定窗口：rememberRegion 能写进去，非法值不覆盖', async () => {
+  const svc = createWatchService(base())
+  const r = { x: 10, y: 20, width: 800, height: 450, hwnd: 1 }
+  svc.rememberRegion(r)
+  assert.deepEqual(svc.status().lastRegion, r)
+  // 空/非法不覆盖已有值：锁一次之后不该被一次误触清掉
+  svc.rememberRegion(null)
+  svc.rememberRegion({ width: 0, height: 0 })
+  assert.deepEqual(svc.status().lastRegion, r)
+})
+
 test('采集流断掉时状态变 failed，并写明原因', async () => {
   let cap = null
   const svc = createWatchService(

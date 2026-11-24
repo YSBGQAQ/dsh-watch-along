@@ -357,8 +357,17 @@ export function createSupervisor({
     return runChecks(probes)
   }
 
-  /** 只绑 127.0.0.1 的面板接口：GET /status、POST /start、POST /restart。 */
-  function serve(port = cfg.ports.panel) {
+  /**
+   * 只绑 127.0.0.1 的面板接口：GET /status、POST /start、POST /restart。
+   *
+   * routes 是插件自己加的路由（`{ 'POST /ocr-test': ({body}) => ({ok,...}) }`）。
+   * 为什么不各起一个 server：面板端口在 client.js 里写死 8790，多开一个口就要
+   * 再传一次端口号给它 —— 等于把"面板怎么连"这件事复制两遍。
+   */
+  function serve(portOrOpts = cfg.ports.panel) {
+    const opts = typeof portOrOpts === 'number' ? { port: portOrOpts } : (portOrOpts ?? {})
+    const port = opts.port ?? cfg.ports.panel
+    const routes = opts.routes ?? {}
     const server = http.createServer(async (req, res) => {
       // 面板在渲染进程里，跨源必须放开；但只绑回环，外部访问不到。
       // **Allow-Headers 不能漏**：POST /settings 带 content-type: application/json，
@@ -382,6 +391,15 @@ export function createSupervisor({
           const r = handleSettings({ file: settingsFile, method: req.method, body })
           res.statusCode = r.status
           return res.end(JSON.stringify(r.body))
+        }
+        // 插件注入的路由（窗口识别测试）。放在 404 之前，pathname 要剥掉 query。
+        const pathOnly = (req.url ?? '').split('?')[0]
+        const route = routes[`${req.method} ${pathOnly}`]
+        if (route) {
+          const raw = req.method === 'POST' ? await readBody(req) : ''
+          const r = (await route({ body: raw })) ?? {}
+          res.statusCode = r.status ?? 200
+          return res.end(JSON.stringify(r.body ?? r))
         }
         res.statusCode = 404
         res.end(JSON.stringify({ ok: false, error: 'not found' }))

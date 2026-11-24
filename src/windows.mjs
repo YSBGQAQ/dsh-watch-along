@@ -1,24 +1,17 @@
-// 窗口发现：列表用 PowerShell（拿标题最省事），取矩形用 koffi（快、每帧级可用）。
-import { execFileSync } from 'node:child_process'
+// 窗口发现：列表与匹配用**同一套**原生枚举（capture-koffi），不再走 PowerShell。
+// 为什么换掉 PowerShell：起一个 powershell.exe 约 300ms，面板刷新一次就抖一下；
+// 更要紧的是它列的是"进程主窗口标题"，和按标题匹配时枚举的"顶层可见窗口"是两个来源，
+// 会出现"列表里有、匹配时找不到"。
 import { windowRect, dpiForSystem } from '../vendor/dsh-streamvision-main/lib/native.js'
+import { listWindowTitles } from './capture-koffi.mjs'
 
 /**
- * 当前可见的顶层窗口标题（去重）。
- * 只在 watch_windows 与「找不到窗口」的报错里用，所以慢一点可以接受。
+ * 当前可见的顶层窗口标题（按标题去重，保持枚举顺序：最上层在前）。
+ * 微秒级，可以给面板频繁刷新用。
  */
-export function listWindows({ timeoutMs = 8000 } = {}) {
-  const script = [
-    '[Console]::OutputEncoding=[System.Text.Encoding]::UTF8',
-    "Get-Process | Where-Object { $_.MainWindowTitle -ne '' } | Select-Object -ExpandProperty MainWindowTitle -Unique",
-  ].join('; ')
+export function listWindows() {
   try {
-    const out = execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', script], {
-      encoding: 'utf8',
-      windowsHide: true,
-      timeout: timeoutMs,
-      maxBuffer: 1 << 20,
-    })
-    return [...new Set(out.split(/\r?\n/).map((s) => s.trim()).filter(Boolean))]
+    return listWindowTitles().map((x) => x.title)
   } catch {
     return []
   }

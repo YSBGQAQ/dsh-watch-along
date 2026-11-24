@@ -218,3 +218,27 @@ test('没有 pythonw.exe 就退回 python.exe，不能因为换解释器起不�
   assert.equal(quietPython('/x/python.exe'), '/x/python.exe')
   assert.equal(quietPython('C:/a/python.exe'), 'C:/a/python.exe')
 })
+
+// 窗口识别测试走面板接口：插件从外面塞一条路由进来，别再起第二个 server。
+test('插件可以往面板接口上加自己的路由', async () => {
+  const sup = createSupervisor({
+    config: { ready: true, missing: [], ports: { ocr: 1, asr: 2, panel: 18792 }, rootDir: '/r', python: 'p', whisperDir: 'w' },
+    fetchImpl: async () => ({ ok: false, status: 502 }),
+    settingsFile: tmpFile(),
+  })
+  const server = sup.serve({ port: 18792, routes: { 'POST /ocr-test': ({ body }) => ({ ok: true, got: body }) } })
+  await new Promise((r) => setTimeout(r, 60))
+  try {
+    const res = await fetch('http://127.0.0.1:18792/ocr-test', { method: 'POST', body: '{"expect":"你好"}' })
+    const j = await res.json()
+    assert.equal(j.ok, true)
+    assert.equal(j.got, '{"expect":"你好"}', '体要原样交给路由')
+
+    // 方法/路径不匹配仍然 404，别把别的请求吞掉
+    const miss = await fetch('http://127.0.0.1:18792/ocr-test?x=1')
+    assert.equal(miss.status, 404)
+    assert.equal((await miss.json()).ok, false)
+  } finally {
+    server.close()
+  }
+})

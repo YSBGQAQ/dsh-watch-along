@@ -4,7 +4,7 @@
 
 **Blocked by:** 02, 03
 
-**Status:** done（只读；写接口有意不做）
+**Status:** done（2026-11-21 只读三条；**2026-11-24 扩写**：加现抓一帧 + 启停两条）
 
 - [ ] 开启端口后，手机浏览器能 `GET /events?sinceId=0&wait=30` 拿到事件
 - [ ] `GET /frame/<sheetId>?token=…` 返回 PNG，带 `Content-Length`
@@ -18,14 +18,20 @@
 
 | 接口 | 说明 |
 |---|---|
-| `GET /api/status?token=` | 当前状态（窗口、帧数、state） |
+| `GET /api/status?token=` | 当前状态（窗口、帧数、state、region、lastRegion） |
 | `GET /api/events?token=&sinceId=&wait=` | 长轮询，语义与 `watch_events` 一致 |
-| `GET /api/frame?token=&sheetId=` | 取已产出的拼图（PNG 字节），**不提供实时抓屏** |
+| `GET /api/frame?token=&sheetId=` | 取已产出的拼图（PNG 字节） |
+| `GET /api/frame?token=&live=1` | **现抓一帧**（PNG）；同一秒内重复请求回上一张 —— 2026-11-24 加，因为拼图只在画面明显变化时才产，看视频时常常一张都没有 |
+| `POST /api/start?token=` | 起采集，body `{"window":"标题片段"}`（可空 → 用设置里的默认窗口）—— 2026-11-24 加 |
+| `POST /api/stop?token=` | 停采集 —— 2026-11-24 加 |
+| `POST /api/ocr-test?token=` | 窗口识别测试并锁定，body `{"window":"标题片段"}`：认到底部任意文字即通过，并把该窗口设成默认 —— 2026-11-24 加。与面板 `POST /ocr-test` 共用 `index.js` 的 `ocrTestRoute`，不复制实现 |
+| `GET /api/windows?token=` | 列当前可见窗口标题 —— 2026-11-24 加。与面板 `GET /windows` 共用 `listWindowsRoute`；原生枚举，约 5ms |
 
 - 全部要 token（`?token=` 或 `Authorization: Bearer`），服务绑 `0.0.0.0`
 - token 默认随机生成并打进日志；可用 `WATCH_ALONG_TOKEN` 固定
 - 端口 `WATCH_ALONG_PORT`，默认 8770
-- **写接口不做**：每多一个写入口，就多一个可被控制你电脑的入口
+- **写只做启停**：不碰设置、不碰文件、不执行命令。失败一律 `200 + {ok:false,error:"中文原因"}`（只有缺 token 是 401），让手机面板能把这句原样显示出来
+- 接线：`src/http.mjs` 只认注入的 `control = { start(window), stop() }`，不认识 supervisor；真接线在 `index.js`，`start` 里会先等 python 服务就绪（最多 20 秒），并区分「已经在采 / 采集中断」
 
 **踩到的坑**：`apply` 里启动监听后，预检脚本不会退出（进程被 server 挂着）——
 给 `apply` 加了第二参数 `{mobile:false}`，预检时跳过。
