@@ -1,137 +1,135 @@
-# 实时陪看（watch along）
+<p align="center">
+  <img src="./assets/readme/hero.svg" width="100%" alt="实时陪看：AI 盯着浏览器里正在播的窗口，只读底部 34% 的字幕带，同时接收画面变化与系统声音">
+</p>
 
-让 AI 陪你看网页上的直播或长视频：它盯着同一个窗口，读屏幕上的字、听系统输出的声音，把这一切变成一条带时间码的文字事件流，需要看清细节时再要一张拼图。电脑端直接可用；手机端在同一局域网里可以读事件、现抓一帧、启停采集（只提供接口，不含 App）。
+**实时陪看**是 DSH 的一个插件：它盯着你在浏览器里正在播的**那一个窗口**，把画面变化、屏幕上的字、电脑正在放的声音，变成一条带时间码的事件流交给 AI。AI 因此知道你现在看到哪儿了、画面里在说什么，能跟着你一起看。
 
-> **环境必须先备好再谈使用。** 本项目**不代下载、不代安装**任何依赖（Python 包、模型权重、ffmpeg、显卡驱动）。缺什么请照下面的表格自己下好；**环境问题不在本项目支持范围内**——我们能查的是代码，查不了你的网络和显卡驱动。
+它不录屏、不传视频、不替你操作。抓屏、认字、转写都在本机做完；交出去的只有文字事件，以及你主动要的那张拼图。
+
+> **环境必须先备好再谈使用。** 本项目**不代下载、不代安装**任何依赖（Python 包、模型权重、驱动）。缺什么照 [`docs/downloads.md`](docs/downloads.md) 自己备好；我们能查的是代码，查不了你的网络和显卡驱动。
 
 ---
 
-## 一、环境要求（全部需要提前备好）
+## 它和「隔几秒截张图喂给模型」不一样
 
-### 必需
+- **交的是事件，不是截图。** 模型收到的是 `say` / `sub` / `motion` 一条条带时刻的记录，不用自己从图里找话说。10 分钟一场实测只交出 528 条事件 —— 按 8 fps 截屏喂图，那是四千多张。
+- **只看该看的地方。** 屏幕文字只认窗口**底部 34%** 那条带（字幕区），其余 66% 只看「有没有动」。这是识别延迟能压到 1.2 秒中位的原因，也是水印和角标会混进来的原因。
+- **两种节奏。** 静默观察每 6 秒一轮（只看不说），主动说话默认 30 秒最多一句 —— 第一次开口也要等满 30 秒，不会你一坐下它就抢话。
+- **手机能接手。** 同 WiFi 下读事件、现抓一帧、启停采集，不用走回电脑。
 
-| 组件 | 版本 | 用途 | 从哪下 | 体积 |
-|---|---|---|---|---|
-| **Python** | 3.12.x | 跑 OCR / 录音 / 转写 | <https://www.python.org/downloads/release/python-31210/> | ~25 MB |
-| **ffmpeg** | ≥ 7.0（实测 9.0.2 可用） | 抓屏幕 | <https://www.gyan.dev/ffmpeg/builds/> | ~80 MB |
-| **Node.js** | ≥ 20（实测 22） | 插件运行时 | <https://nodejs.org/> | ~30 MB |
-| **DSH 桌面版** | 当前版本 | 插件宿主 | <https://github.com/deepseek-ai/deepseek-harness/releases> | — |
-| **NVIDIA 驱动** | 支持 CUDA 12 | GPU 转写 | <https://www.nvidia.com/download/> | — |
+<p align="center">
+  <img src="./assets/readme/events.svg" width="100%" alt="模型收到的事件样例：21:14:03 say、21:14:07 sub、21:14:11 motion 三条带时间码的记录">
+</p>
 
-### Python 包
+三条通道对应三个字段：
 
-装进一个 Python 3.12 的 venv 里，离线安装：
+| 字段 | 从哪来 | 说明 |
+|---|---|---|
+| `say` | 系统输出的声音 → faster-whisper | 本地转写，带起止秒 |
+| `sub` | 窗口底部 34% → rapidocr | 只有 1 个汉字的行直接丢 |
+| `motion` | 整帧 64×36 网格前后比对 | 带位置（`下部`/`右部`）、强度、格数，可回取那张拼图 |
 
-```powershell
-pip install --no-index --find-links=<wheels 目录> -r requirements.txt
+---
+
+## 怎么用
+
+**第一次装**（详细步骤与离线装法见 [`docs/install.md`](docs/install.md)）：
+
+```cmd
+set WATCH_ALONG_WHEELS=D:\path\to\wheels
+set WATCH_ALONG_WHISPER_DIR=D:\path\to\whisper-turbo
+scripts\setup.cmd
 ```
 
-| 包 | 版本 | 用途 | 从哪下 |
-|---|---|---|---|
-| `rapidocr` | ≥ 3.9（实测 3.10.0） | 字幕 OCR。**wheel 内已含 PP-OCRv6 det/rec small 模型**（约 31 MB），不用另下 | <https://pypi.org/project/rapidocr/> |
-| `onnxruntime` | ≥ 1.17（实测 1.32） | OCR 推理，CPU | <https://pypi.org/project/onnxruntime/> |
-| `faster-whisper` | ≥ 1.1（实测 1.2.1） | 语音转写 | <https://pypi.org/project/faster-whisper/> |
-| `ctranslate2` | 随 faster-whisper（实测 4.9） | 转写推理引擎 | 同上 |
-| `soundcard` | ≥ 0.4（实测 0.4.6） | 系统声音环回 | <https://pypi.org/project/soundcard/> |
-| `numpy` | ≥ 1.26（实测 2.5.5） | 音频处理 | <https://pypi.org/project/numpy/> |
-| `nvidia-cublas-cu12` | 12.x（实测 12.9） | **GPU 转写必需**，约 553 MB | <https://pypi.org/project/nvidia-cublas-cu12/> |
-| `nvidia-cudnn-cu12` | 9.x（实测 9.28） | **GPU 转写必需**，约 696 MB | <https://pypi.org/project/nvidia-cudnn-cu12/> |
+**每次用**：
 
-> 国内可加 `-i https://pypi.tuna.tsinghua.edu.cn/simple` 加速。
+```cmd
+set WATCH_ALONG_PY=%CD%\venv\Scripts\python.exe
+set WATCH_ALONG_WHISPER_DIR=D:\path\to\whisper-turbo
+scripts\start-services.cmd
+```
 
-### 模型权重
+会开两个窗口，**都别关**（关掉对应通道就没了）：
 
-| 模型 | 文件 | 从哪下 | 体积 |
-|---|---|---|---|
-| **Whisper large-v3-turbo**（CTranslate2 fp16） | `model.bin` `config.json` `tokenizer.json` `vocabulary.json` `preprocessor_config.json` | <https://huggingface.co/mobiuslabsgmbh/faster-whisper-large-v3-turbo>（备选：<https://huggingface.co/deepdml/faster-whisper-large-v3-turbo-ct2>） | ~1.6 GB |
-| **PP-OCRv6 small** | 已在 `rapidocr` 的 wheel 内 | — | 31 MB |
+| 窗口 | 端口 | 看到这一行就算好了 |
+|---|---|---|
+| OCR | 8765 | `[ocr] 模型加载完成` |
+| ASR | 8766 | `[asr] 开始连续录音：<你的扬声器名>` |
 
-**Whisper 五个文件必须齐全**，少一个都加载不了。放哪个目录都行，设置页里指过去即可。
+**然后**：
 
----
-
-## 二、安装
-
-1. 用 Python 3.12 建 venv（**不下载任何东西**）：
-
-   ```powershell
-   py -3.12 -m venv <某个目录>\venv
-   ```
-
-2. 离线装包：
-
-   ```powershell
-   <某个目录>\venv\Scripts\python.exe -m pip install --no-index --find-links=<wheels 目录> -r requirements.txt
-   ```
-
-3. 把 Whisper 模型放好，记住路径。
-
-4. 在 DSH 里装插件，重启宿主。
+1. 在 DSH 里说「陪我看这个窗口，标题里有 XXX」；或者在设置面板「测试并锁定匹配窗口」里锁一个，之后直接说「开始陪看」。
+2. 想看细节就说「现在什么样」，它取一张拼图。
+3. 停下来就说「不用看了」，或等它自己收工。
 
 ---
 
-## 三、设置页
+## 要准备什么
 
-进 **设置 → 插件 → 实时陪看**。
+| 组件 | 要求 | 不满足会怎样 |
+|---|---|---|
+| 系统 | Windows 10 2004+ | 起不来（抓屏与录音都是 Windows 接口） |
+| Python | 3.12 | 装包失败（wheel 是 3.12 编的） |
+| Node.js | ≥ 20 | 插件加载失败 |
+| DSH 桌面版 | 当前版本 | 无处安放这个插件 |
+| 显卡 | NVIDIA + CUDA 12 / cuDNN 9 | **转写**不可用，画面照常 |
+| 磁盘 | 模型约 1.6 GB、wheel 约 1.3 GB | 装不下 |
+| 屏幕 | 目标窗口**不能被挡住** | 抓到的是遮挡物 |
+| 声音 | 系统音量不能是 0 | 全程没有 `say`，且**不会报错** |
+| ffmpeg | ≥ 7，在 PATH 上 | 体检项红；抓屏早已改成原生直抓，不再走 ffmpeg 子进程 |
 
-### 第 1 项永远是「环境检查」
-
-只读，不提供任何一键下载（本项目不代下依赖）。每一项显示三种状态：
-
-| 状态 | 含义 |
-|---|---|
-| 绿 | 可用 |
-| 黄 | 可用但降级（例如 GPU 不可用，转写会失败但画面照常） |
-| 红 | 不可用，该功能整条停用 |
-
-检查项固定为这八条：
-
-1. Python 解释器可执行，版本是 3.12
-2. `rapidocr` / `faster_whisper` / `soundcard` 三个包能导入
-3. `ffmpeg` 在 PATH 上，版本 ≥ 7
-4. NVIDIA 驱动可见（`nvidia-smi` 能跑）
-5. ctranslate2 能加载 CUDA（真的跑一句静音）
-6. OCR 模型可加载（PP-OCRv6 small 在 wheel 内）
-7. Whisper 模型目录存在，四个文件齐全（`config.json` / `model.bin` / `tokenizer.json` / `vocabulary.txt`；**没有** `preprocessor_config.json` 是正常的）
-8. 系统默认输出设备可枚举（环回录音的前提）
-
-每一项失败时，只显示**一句话原因 + README 里对应的下载地址**，不替用户下载。
-
-### 之后是三块：窗口识别测试 / 常用设置 / 服务
-
-- **窗口识别测试**：打开面板会**自动列出当前窗口**，点一条就填进框（也可以手填）；点**测试并锁定匹配窗口** —— 抓一帧、读窗口底部那条带，**认到任意文字就算通过**，并把这条窗口设为本次运行的默认（之后说「开始陪看」不用再报窗口名）。窗口片段**每次启动都是空的**，重启后要重新锁定。测试前把这个窗口放到最前面、别让别的窗口挡住、别缩得太小。（接口与链路见 `docs/ocr-test.md`）
-- **常用设置**：采集帧率、画质档、传图档位、画面字幕开关、声音开关、陪聊提示词、静默提示词、静默观察间隔、主动说话间隔、每分钟语音条数。（窗口标题片段已不再放在设置里。）
-- **服务**：OCR 与 Whisper 两个 python 服务的状态、「启动」「重启」。
-
-改完参数需要**重启 DSH** 生效。
+八项环境检查在设置页第一屏，绿黄红三态，**只读、不提供任何一键下载**。
 
 ---
 
-## 四、使用
+## 面板里有什么
 
-1. 在浏览器里打开直播间，窗口别拖来拖去（采集区域在启动时锁定）。
-2. 对 AI 说一句「陪我看这个窗口，标题里有 XXX」。
-3. AI 会开始收到事件；要看清画面时说「现在什么样」，它会取一张拼图。
-4. 手机在同一 WiFi 下访问 `http://<电脑IP>:8770/api/status?token=<TOKEN>`，可读事件、现抓一帧、启停采集（接口清单见 `README.zh.md` 第五节）。
-
----
-
-## 五、已知限制
-
-- **只支持 Windows**（抓屏走 BitBlt/koffi，录音走 WASAPI）。
-- **采集区域在开始时锁定**：窗口移动或缩放后不会跟随，画面会错位，要停掉重新开始。
-- **窗口关闭或最小化不会报错**：抓的是屏幕上那块矩形，会继续拍到底下的桌面或遮挡它的窗口。
-- **BGM 压过人声时转写会掉字**（不做人声分离）；唱歌会被当说话转写，MV 类内容不适合。
-- **换音频输出设备**（音箱↔耳机）后需要重启插件。
-- **单显示器**设计，副屏与负坐标未支持。
-- 手机端只提供接口（读事件、取图、启停采集），**不含手机 App**。
+- **环境检查** —— 八项只读，失败时给一句话原因 + 对应下载地址，不替你下。
+- **测试并锁定匹配窗口** —— 自动列出当前窗口，点一条填进框；认到底部任意文字就算通过，并锁成默认目标。锁定只在内存，**重启 DSH 后要重锁**。
+- **常用设置** —— 帧率、画质、传图档位、字幕开关、声音开关、陪聊提示词、静默提示词、两个间隔。
+- **服务** —— OCR 与转写两个 python 服务的启停。
 
 ---
 
-## 六、致谢
+## 实测
+
+| 场次 | 时长 | 帧 | 事件（画面/字幕/声音） | OCR p50/p90 | ASR p50/p90 |
+|---|---|---|---|---|---|
+| 整场直播 | 1 小时 29 分 | 57821 | 2723（613 / 1885 / 225） | — | — |
+| 中段十分钟 | 10 分 33 秒 | 4833 | 528（75 / 423 / 30） | 1.2 / 1.4 s | 3.1 / 4.8 s |
+
+一轮 3 分 21 秒的陪看对话：**38 轮 43 步、TTFT 2.1 秒、¥0.068**（折合约 ¥1.2/小时）。全部数据、口径与版本演进在 [`docs/benchmarks.md`](docs/benchmarks.md)（读之前先看那页末尾的「口径坑」）。
+
+---
+
+## 已知限制
+
+1. **只支持 Windows。** 抓屏与录音都是 Windows 接口，没有跨平台的打算。
+2. **遮挡无解。** 抓的是屏幕像素，被盖住就抓到遮挡物。用的时候把目标窗口放最前面。
+3. **区域在开始时锁定。** 窗口移动或缩放后不会跟随，画面会错位，停掉重开。
+4. **底部那条带仍有噪声。** 水印、清晰度角标、播放器控制条会混进 `sub` 事件，实测约 10–17%，靠「汉字 < 2 丢弃」和「相似内容出现 3 次后静音」挡一部分。
+5. **整机混音。** 录的是「电脑在放什么」，微信提示音也会进来。BGM 压过人声时会掉字，唱歌会被当成说话。
+6. **换输出设备要重启插件**（音箱换耳机之后）。
+7. **单显示器。** 副屏与负坐标未支持。
+8. **手机端只有接口，没有 App。**
+
+---
+
+## 出问题先看这里
+
+按现象查的表在 [`README.zh.md`](README.zh.md)（速查版，含手机接口清单与开发命令）。三条最常撞上的：
+
+- **没有 `sub` 事件**：静止的纯视频画面本来就没字，先确认画面里真的有字幕。
+- **没有 `say` 事件**：先看音量是不是 0，再 `curl -s http://127.0.0.1:8766/` 看 `device` 对不对。
+- **手机打不开**：防火墙第一次会拦 8770，允许一下；或 token 拼错。
+
+---
+
+## 致谢
 
 画面链路复用 [dsh-see-now](https://github.com/SAOS-3624/dsh-see-now)（Apache-2.0）；字幕链路的思路与可插拔接口来自 [dsh-streamvision](https://github.com/shet114513/dsh-streamvision)（MIT）；VAD 与幻觉过滤来自 [dsh-better-ears](https://github.com/Destinhue/dsh-better-ears)（MIT）；转写参数参考 [dsh-soundtry](https://github.com/CixiSVesper/dsh-soundtry)。
 
 ---
 
-**更新记录**：[`CHANGELOG.md`](CHANGELOG.md)（只记用户能感知的变化与口径变更）。
+**更新记录**：[`CHANGELOG.md`](CHANGELOG.md) —— 只记用户能感知的变化与口径变更。<br>
+**设计文档**：`docs/`（含 ADR）；票据与讨论在 `.scratch/watch-along/`。

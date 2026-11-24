@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="340" viewBox="0 0 1200 340" role="img" aria-labelledby="evTitle evDesc">
+  <title id="evTitle">模型每一轮真正收到的事件</title>
+  <desc id="evDesc">五条真实格式的事件：时间码从 21:14:03 起，字段 say、sub、motion 分别对应声音、字幕、画面变化。</desc>
+
+  <rect width="1200" height="340" fill="#0A0C0F"/>
+
+  <text x="64" y="46" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif" font-size="18" fill="#7C8695">模型每一轮真正收到的（同一场，节选）</text>
+
+  <g id="stream-panel">
+    <rect x="64" y="68" width="1072" height="218" rx="12" fill="#10141A" stroke="#232B37" stroke-width="1"/>
+
+    <text x="88" y="104" font-family="ui-monospace,'Cascadia Mono',Consolas,monospace" font-size="20" fill="#6F7885">21:14:03</text>
+    <text x="220" y="104" font-family="ui-monospace,'Cascadia Mono',Consolas,monospace" font-size="20" fill="#5BC8C4">say</text>
+    <text x="340" y="104" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif" font-size="21" fill="#D7DCE4">今天我们聊聊这个模型怎么训练</text>
+
+    <text x="88" y="146" font-family="ui-monospace,'Cascadia Mono',Consolas,monospace" font-size="20" fill="#6F7885">21:14:07</text>
+    <text x="220" y="146" font-family="ui-monospace,'Cascadia Mono',Consolas,monospace" font-size="20" fill="#F0C24E">sub</text>
+    <text x="340" y="146" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif" font-size="21" fill="#D7DCE4">给口癖加个称呼</text>
+
+    <text x="88" y="188" font-family="ui-monospace,'Cascadia Mono',Consolas,monospace" font-size="20" fill="#6F7885">21:14:11</text>
+    <text x="220" y="188" font-family="ui-monospace,'Cascadia Mono',Consolas,monospace" font-size="20" fill="#E5645C">motion</text>
+    <text x="340" y="188" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif" font-size="21" fill="#D7DCE4">画面中等变化（下部）·6格</text>
+
+    <text x="88" y="230" font-family="ui-monospace,'Cascadia Mono',Consolas,monospace" font-size="20" fill="#6F7885">21:14:16</text>
+    <text x="220" y="230" font-family="ui-monospace,'Cascadia Mono',Consolas,monospace" font-size="20" fill="#5BC8C4">say</text>
+    <text x="340" y="230" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif" font-size="21" fill="#D7DCE4">它其实只做了一件事：把问题换成选择题</text>
+
+    <text x="88" y="272" font-family="ui-monospace,'Cascadia Mono',Consolas,monospace" font-size="20" fill="#6F7885">21:14:19</text>
+    <text x="220" y="272" font-family="ui-monospace,'Cascadia Mono',Consolas,monospace" font-size="20" fill="#F0C24E">sub</text>
+    <text x="340" y="272" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif" font-size="21" fill="#D7DCE4">模型怎么解释</text>
+  </g>
+
+  <text x="64" y="314" font-family="ui-monospace,'Cascadia Mono',Consolas,monospace" font-size="17" fill="#5E6673">字段名与措辞取自 packEvent() 的真实输出；台词为节选示意。</text>
+</svg>
